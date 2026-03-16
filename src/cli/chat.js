@@ -37,7 +37,6 @@ async function handleCommand(command) {
             const currentSession = getSession();
             await generateDocumentation(config.workspace.targetProject, currentSession);
             
-            // Фиксируем задачу: очищаем память ИИ и архивируем бэкапы
             clearSession();
             clearSessionBackups();
             
@@ -51,10 +50,7 @@ async function handleCommand(command) {
             
         case "/abort":
             console.log("\n🗑️ Aborting current task...");
-            // Восстанавливаем файлы
             await abortSessionPatches(config.workspace.targetProject);
-            
-            // Сбрасываем память ИИ
             clearSession();
             initSession('Task aborted (waiting...)');
             console.log("🛑 Task aborted. AI memory erased. Files reverted.");
@@ -115,12 +111,11 @@ function chatLoop() {
                 );
             }
 
-            // Вычисляем абсолютный путь к проекту для file-manager
             const targetAbsolute = path.resolve(process.cwd(), config.workspace.targetProject);
             const filesContext = readFilesContent(relevantFiles, targetAbsolute);
             const sessionContext = getSession();
-            
-            // === ЖЕСТКИЙ JSON-ПРОМПТ ===
+
+            // === ОБНОВЛЕННЫЙ ПРОМПТ ДЛЯ DUAL-MODE ===
             const prompt = `
 CODE CONTEXT:
 ${filesContext || "No files required."}
@@ -129,14 +124,17 @@ CURRENT SESSION:
 ${sessionContext}
 
 CRITICAL INSTRUCTIONS:
-1. You are an autonomous coding agent. 
-2. You MUST respond ONLY with a valid JSON object. Do not include markdown formatting like \`\`\`json.
-3. If the user asks to modify code, provide the full updated file content in the "content" field.
-4. "thought" field must be in Russian, short and clear (what was changed).
+1. You are an autonomous Senior Software Architect and Developer.
+2. You MUST respond ONLY with a valid JSON object. Do not use markdown wrappers like \`\`\`json.
+3. Choose your "mode" carefully:
+   - Use "chat" mode if the user is asking a question, requesting an explanation, planning, or discussing architecture. In this mode, provide your detailed response in "message" (Markdown is allowed here) and leave "filesToUpdate" empty.
+   - Use "patch" mode ONLY if the user explicitly asks to write, modify, or delete code. In this mode, "message" must be a short summary of what you changed, and "filesToUpdate" must contain the full updated file contents.
+4. The "message" field MUST be written in Russian.
 
 Expected JSON format:
 {
-  "thought": "Краткое объяснение того, что ты сделал на русском языке.",
+  "mode": "chat" | "patch",
+  "message": "Detailed response (for chat) OR short action summary (for patch) in Russian.",
   "filesToUpdate": [
     {
       "path": "app/components/FileName.tsx",
@@ -148,24 +146,39 @@ Expected JSON format:
 Answer the developer's last message:
 `;
 
-            console.log("🤖 Executor (Pro) is coding...");
+            console.log("🤖 Executor (Pro) is thinking/coding...");
             const rawResponse = await askModel(prompt, false);
 
-            // Очищаем ответ от случайного маркдауна и парсим JSON
             const cleanJson = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
             const parsedResponse = JSON.parse(cleanJson);
 
-            console.log("\n================ AGENT RESPONSE ================");
-            console.log(`💡 ${parsedResponse.thought}`);
-            console.log("==============================================\n");
-
-            // Применяем изменения к файлам
-            if (parsedResponse.filesToUpdate && parsedResponse.filesToUpdate.length > 0) {
-                await applyPatches(config.workspace.targetProject, parsedResponse.filesToUpdate);
+            console.log(`\n================ AGENT RESPONSE [${parsedResponse.mode ? parsedResponse.mode.toUpperCase() : 'UNKNOWN'}] ================`);
+            
+            // Ветвление логики на основе режима
+            if (parsedResponse.mode === 'chat') {
+                // В режиме чата выводим полный ответ и не трогаем файлы
+                console.log(parsedResponse.message);
+                console.log("========================================================\n");
+                
+                appendToSession("agent", parsedResponse.message);
+                
+            } else if (parsedResponse.mode === 'patch') {
+                // В режиме патча выводим только короткую мысль и меняем файлы
+                console.log(`💡 ${parsedResponse.message}`);
+                console.log("========================================================\n");
+                
+                if (parsedResponse.filesToUpdate && parsedResponse.filesToUpdate.length > 0) {
+                    await applyPatches(config.workspace.targetProject, parsedResponse.filesToUpdate);
+                }
+                
+                // В историю сессии пишем пометку, что был применен патч, чтобы ИИ это помнил
+                appendToSession("agent", `[PATCH APPLIED]: ${parsedResponse.message}`);
+            } else {
+                // На случай если ИИ сгаллюцинирует режим
+                console.log(parsedResponse.message || "No message provided.");
+                console.log("========================================================\n");
+                appendToSession("agent", JSON.stringify(parsedResponse));
             }
-
-            // В историю сессии пишем только мысль агента, чтобы не раздувать контекст килобайтами кода
-            appendToSession("agent", parsedResponse.thought);
 
         } catch (error) {
             console.error("\n❌ Processing error (model might not have returned valid JSON):", error.message);
