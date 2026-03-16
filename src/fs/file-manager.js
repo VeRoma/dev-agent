@@ -66,16 +66,22 @@ export function getProjectFiles(targetPath, agentRootDir = process.cwd()) {
 /**
  * Читает содержимое переданных файлов и формирует единый текстовый контекст
  * @param {Array<string>} filePaths - Массив путей к файлам
+ * @param {string} targetAbsolute - Абсолютный путь к корню проекта (чтобы вычислить относительные пути)
  * @returns {string} Текст с содержимым всех файлов
  */
-export function readFilesContent(filePaths) {
+export function readFilesContent(filePaths, targetAbsolute) {
     let context = '';
     for (const filePath of filePaths) {
         if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, 'utf-8');
-            // Оставляем только имя файла и папку для компактности
-            const shortName = path.basename(filePath);
-            context += `\n--- Файл: ${shortName} ---\n${content}\n`;
+            
+            // Вычисляем путь относительно корня проекта (например: app/components/GlobeModel.tsx)
+            const relativePath = targetAbsolute ? path.relative(targetAbsolute, filePath) : path.basename(filePath);
+            
+            // Заменяем обратные слэши Windows на прямые для единообразия в JSON
+            const cleanPath = relativePath.replace(/\\/g, '/');
+            
+            context += `\n--- Файл: ${cleanPath} ---\n${content}\n`;
         }
     }
     return context;
