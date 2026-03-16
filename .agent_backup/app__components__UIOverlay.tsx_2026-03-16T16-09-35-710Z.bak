@@ -1,0 +1,68 @@
+"use client";
+
+import { useSyncExternalStore } from "react";
+import { useIntro } from "../context/IntroContext";
+import { useQuality } from "../context/QualityContext";
+import { cameraStore } from "../store/cameraStore";
+
+export function UIOverlay() {
+	const { booted, entered, setEntered } = useIntro();
+	const { mode, setMode } = useQuality();
+
+	// МАГИЯ ЗДЕСЬ: Подписываемся на координаты камеры из нашего стора.
+	// React сам перерисует этот компонент, когда стор обновится!
+	const coords = useSyncExternalStore(
+		cameraStore.subscribe,
+		cameraStore.getCoords,
+	);
+
+	// Если 3D-сцена еще загружает ассеты, скрываем интерфейс
+	if (!booted) return null;
+
+	return (
+		<div className="absolute inset-0 z-50 pointer-events-none flex flex-col justify-between p-6 text-white font-mono text-sm">
+			{/* --- ВЕРХНЯЯ ПАНЕЛЬ --- */}
+			<div className="flex justify-between items-start">
+				<div>
+					<h1 className="text-2xl font-bold tracking-widest">
+						AVIGEYA
+					</h1>
+					<p className="opacity-50 mt-1 uppercase text-xs tracking-widest">
+						Design Studio
+					</p>
+				</div>
+
+				{/* Кнопка входа (скрывается, когда мы уже внутри) */}
+				{!entered && (
+					<button
+						onClick={() => setEntered(true)}
+						className="pointer-events-auto px-6 py-2 border border-white/30 hover:bg-white/20 transition-all backdrop-blur-sm uppercase tracking-widest">
+						Explore
+					</button>
+				)}
+			</div>
+
+			{/* --- НИЖНЯЯ ПАНЕЛЬ --- */}
+			<div className="flex justify-between items-end">
+				{/* Вывод координат камеры */}
+				<div className="opacity-50">{coords}</div>
+
+				{/* Настройки графики (Post-Processing) */}
+				<div className="pointer-events-auto flex gap-2 backdrop-blur-sm bg-black/20 p-1 rounded">
+					{(["low", "medium", "high"] as const).map((q) => (
+						<button
+							key={q}
+							onClick={() => setMode(q)}
+							className={`uppercase px-3 py-1 text-xs tracking-wider transition-all rounded ${
+								mode === q
+									? "bg-white text-black font-bold"
+									: "text-white/50 hover:text-white hover:bg-white/10"
+							}`}>
+							{q}
+						</button>
+					))}
+				</div>
+			</div>
+		</div>
+	);
+}

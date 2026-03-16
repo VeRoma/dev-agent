@@ -1,122 +1,233 @@
 import readline from "readline";
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process"; // <-- НОВЫЙ ИМПОРТ для /editor
 import { getProjectFiles, readFilesContent } from "../fs/file-manager.js";
 import {
-    initSession,
-    appendToSession,
-    getSession,
-    clearSession,
+	initSession,
+	appendToSession,
+	getSession,
+	clearSession,
 } from "../core/session.js";
 import { askModel } from "../core/llm.js";
 import { determineRelevantFiles } from "../core/routing.js";
-import { generateDocumentation, generateIndexes } from '../fs/docs-generator.js';
-import { applyPatches, abortSessionPatches, clearSessionBackups, applyRedoPatches } from '../fs/patcher.js';
+import {
+	generateDocumentation,
+	generateIndexes,
+} from "../fs/docs-generator.js";
+import {
+	applyPatches,
+	abortSessionPatches,
+	clearSessionBackups,
+	applyRedoPatches,
+} from "../fs/patcher.js";
 
 const configPath = path.join(process.cwd(), "agent.config.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 
 const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
+	input: process.stdin,
+	output: process.stdout,
 });
 
 export function startCLI() {
-    console.log(`\n🚀 Dev-Agent initialized!`);
-    console.log(`🧠 Executor: ${config.llm.executorModel}`);
-    console.log(`📂 Working directory: ${config.workspace.targetProject}\n`);
+	console.log(`\n🚀 Dev-Agent initialized!`);
+	console.log(`🧠 Executor: ${config.llm.executorModel}`);
+	console.log(`📂 Working directory: ${config.workspace.targetProject}`);
 
-    initSession("Current development (General)");
-    chatLoop();
+	initSession("Current development (General)");
+	chatLoop();
 }
 
 async function handleCommand(command) {
-    switch (command.toLowerCase()) {
-        case '/save':
-            console.log('\n💾 Starting save process...');
-            const currentSession = getSession();
-            await generateDocumentation(config.workspace.targetProject, currentSession);
-            
-            clearSession();
-            clearSessionBackups();
-            
-            initSession('New task (waiting...)');
-            console.log('🧹 Temporary session and backups cleared. Ready for a new task!');
-            break;
-            
-        case "/index":
-            await generateIndexes(config.workspace.targetProject);
-            break;
-            
-        case "/abort":
-            console.log("\n🗑️ Aborting current task...");
-            await abortSessionPatches(config.workspace.targetProject);
-            clearSession();
-            initSession('Task aborted (waiting...)');
-            console.log("🛑 Task aborted. AI memory erased. Files reverted.");
-            break;
+	switch (command.toLowerCase()) {
+		case "/save":
+			console.log("\n💾 Starting save process...");
+			const currentSession = getSession();
+			await generateDocumentation(
+				config.workspace.targetProject,
+				currentSession,
+			);
+			await generateIndexes(config.workspace.targetProject);
+			clearSession();
+			clearSessionBackups();
+			initSession("New task (waiting...)");
+			console.log(
+				"🧹 Temporary session and backups cleared. Ready for a new task!",
+			);
+			break;
 
-        case "/redo":
-            console.log("\n🔄 Restoring aborted task...");
-            const isRedone = await applyRedoPatches(config.workspace.targetProject);
-            if (isRedone) {
-                console.log("⏩ Task restored. AI memory reloaded. Files reverted to modified state.");
-            }
-            break;
-            
-        case "/push":
-            console.log("\n🚀 Preparing release...");
-            console.log("   [To be implemented: generate commit message -> git add, commit, push]");
-            break;
-            
-        default:
-            console.log("\n⚠️ Unknown command. Available: /save, /index, /abort, /redo, /push");
-    }
+		case "/index":
+			await generateIndexes(config.workspace.targetProject);
+			break;
+
+		case "/abort":
+			console.log("\n🗑️ Aborting current task...");
+			await abortSessionPatches(config.workspace.targetProject);
+			clearSession();
+			initSession("Task aborted (waiting...)");
+			console.log("🛑 Task aborted. AI memory erased. Files reverted.");
+			break;
+
+		case "/redo":
+			console.log("\n🔄 Restoring aborted task...");
+			const isRedone = await applyRedoPatches(
+				config.workspace.targetProject,
+			);
+			if (isRedone) {
+				console.log(
+					"⏩ Task restored. AI memory reloaded. Files reverted to modified state.",
+				);
+			}
+			break;
+
+		case "/clear": // <-- НОВАЯ КОМАНДА: Очистка только памяти чата
+			clearSession();
+			initSession("Context cleared");
+			console.log("\n🧹 AI memory cleared. Let's start a fresh topic!");
+			break;
+
+		case "/push":
+			console.log("\n🚀 Preparing release...");
+			console.log(
+				"   [To be implemented: generate commit message -> git add, commit, push]",
+			);
+			break;
+
+		default:
+			console.log(
+				"\n⚠️ Unknown command. Available: /save, /index, /abort, /redo, /clear, /editor, /push",
+			);
+	}
 }
 
 function chatLoop() {
-    rl.question('🧑 Your question (or "exit" to quit): ', async (answer) => {
-        const text = answer.trim();
+	// <-- ИЗМЕНЕН ПРОМПТ НА ЛАКОНИЧНЫЙ >>
+	rl.question("\n>> ", async (answer) => {
+		let text = answer.trim();
 
-        if (text.toLowerCase() === "exit" || text.toLowerCase() === "quit") {
-            console.log("👋 Shutting down. See you!");
-            rl.close();
-            return;
-        }
+		if (text.toLowerCase() === "exit" || text.toLowerCase() === "quit") {
+			console.log("👋 Shutting down. See you!");
+			rl.close();
+			return;
+		}
 
-        if (!text) {
-            chatLoop();
-            return;
-        }
+		// --- 1. ЛОГИКА МНОГОСТРОЧНОГО ВВОДА (/editor) ---
+		if (text === "/editor") {
+			const tempPromptFile = path.join(
+				process.cwd(),
+				".agent_prompt.tmp",
+			);
+			fs.writeFileSync(
+				tempPromptFile,
+				"// Write your multi-line prompt here. Save and CLOSE the editor tab when done.\n",
+				"utf-8",
+			);
+			console.log(
+				"📝 Opening VS Code for multi-line input (waiting for you to save and close the tab)...",
+			);
+			try {
+				// --wait заставит Node.js ждать, пока ты не закроешь вкладку в VS Code
+				execSync(`code --wait "${tempPromptFile}"`);
 
-        if (text.startsWith("/")) {
-            await handleCommand(text);
-            chatLoop();
-            return;
-        }
+				// Читаем, что ты написал, и убираем первую строку-инструкцию
+				const editorText = fs
+					.readFileSync(tempPromptFile, "utf-8")
+					.replace(
+						"// Write your multi-line prompt here. Save and CLOSE the editor tab when done.\n",
+						"",
+					)
+					.trim();
 
-        console.log("🤖 Agent is gathering context...");
-        appendToSession("user", text);
+				if (!editorText) {
+					console.log("⚠️ Prompt is empty. Canceled.");
+					chatLoop();
+					return;
+				}
 
-        try {
-            const relevantFiles = await determineRelevantFiles(
-                text,
-                config.workspace.targetProject,
-            );
+				text = editorText; // Подменяем текст на то, что из редактора
+				console.log(`\n[Multiline Input Received]`);
+			} catch (error) {
+				console.log(
+					'⚠️ Could not open editor. Make sure "code" command is in your PATH.',
+				);
+				chatLoop();
+				return;
+			}
+		}
 
-            console.log(`📂 Files selected for analysis: ${relevantFiles.length}`);
-            if (relevantFiles.length > 0) {
-                relevantFiles.forEach((f) =>
-                    console.log(`   - ${path.basename(f)}`),
-                );
-            }
+		if (!text) {
+			chatLoop();
+			return;
+		}
 
-            const targetAbsolute = path.resolve(process.cwd(), config.workspace.targetProject);
-            const filesContext = readFilesContent(relevantFiles, targetAbsolute);
-            const sessionContext = getSession();
+		if (text.startsWith("/") && text !== "/editor") {
+			await handleCommand(text);
+			chatLoop();
+			return;
+		}
 
-            // === ОБНОВЛЕННЫЙ ПРОМПТ ДЛЯ DUAL-MODE ===
-            const prompt = `
+		console.log("🤖 Agent is gathering context...");
+		appendToSession("user", text);
+
+		try {
+			// --- 2. ЛОГИКА ПРЯМЫХ УПОМИНАНИЙ (@) ---
+			const mentionRegex = /@([a-zA-Z0-9_.-]+)/g;
+			const mentions = [...text.matchAll(mentionRegex)].map((m) => m[1]);
+			const allProjectFiles = getProjectFiles(
+				config.workspace.targetProject,
+			);
+			let forcedFiles = [];
+
+			if (mentions.length > 0) {
+				for (const mention of mentions) {
+					// Ищем файл по точному имени (с расширением или без)
+					const matched = allProjectFiles.find((f) => {
+						const base = path.basename(f);
+						const nameWithoutExt = base.replace(/\.[^/.]+$/, "");
+						return base === mention || nameWithoutExt === mention;
+					});
+
+					if (matched) {
+						forcedFiles.push(matched);
+						console.log(`📌 Explicitly included: ${mention}`);
+					} else {
+						console.log(
+							`⚠️ Mentioned file not found in project: ${mention}`,
+						);
+					}
+				}
+			}
+
+			// Получаем файлы от ИИ-маршрутизатора
+			let relevantFiles = await determineRelevantFiles(
+				text,
+				config.workspace.targetProject,
+			);
+
+			// Объединяем "умные" файлы и "принудительные", убирая дубликаты
+			relevantFiles = [...new Set([...forcedFiles, ...relevantFiles])];
+
+			console.log(
+				`📂 Files selected for analysis: ${relevantFiles.length}`,
+			);
+			if (relevantFiles.length > 0) {
+				relevantFiles.forEach((f) =>
+					console.log(`   - ${path.basename(f)}`),
+				);
+			}
+
+			const targetAbsolute = path.resolve(
+				process.cwd(),
+				config.workspace.targetProject,
+			);
+			const filesContext = readFilesContent(
+				relevantFiles,
+				targetAbsolute,
+			);
+			const sessionContext = getSession();
+
+			const prompt = `
 CODE CONTEXT:
 ${filesContext || "No files required."}
 
@@ -146,44 +257,58 @@ Expected JSON format:
 Answer the developer's last message:
 `;
 
-            console.log("🤖 Executor (Pro) is thinking/coding...");
-            const rawResponse = await askModel(prompt, false);
+			console.log("🤖 Executor (Pro) is thinking/coding...");
+			const rawResponse = await askModel(prompt, false);
 
-            const cleanJson = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-            const parsedResponse = JSON.parse(cleanJson);
+			const cleanJson = rawResponse
+				.replace(/```json/g, "")
+				.replace(/```/g, "")
+				.trim();
+			const parsedResponse = JSON.parse(cleanJson);
 
-            console.log(`\n================ AGENT RESPONSE [${parsedResponse.mode ? parsedResponse.mode.toUpperCase() : 'UNKNOWN'}] ================`);
-            
-            // Ветвление логики на основе режима
-            if (parsedResponse.mode === 'chat') {
-                // В режиме чата выводим полный ответ и не трогаем файлы
-                console.log(parsedResponse.message);
-                console.log("========================================================\n");
-                
-                appendToSession("agent", parsedResponse.message);
-                
-            } else if (parsedResponse.mode === 'patch') {
-                // В режиме патча выводим только короткую мысль и меняем файлы
-                console.log(`💡 ${parsedResponse.message}`);
-                console.log("========================================================\n");
-                
-                if (parsedResponse.filesToUpdate && parsedResponse.filesToUpdate.length > 0) {
-                    await applyPatches(config.workspace.targetProject, parsedResponse.filesToUpdate);
-                }
-                
-                // В историю сессии пишем пометку, что был применен патч, чтобы ИИ это помнил
-                appendToSession("agent", `[PATCH APPLIED]: ${parsedResponse.message}`);
-            } else {
-                // На случай если ИИ сгаллюцинирует режим
-                console.log(parsedResponse.message || "No message provided.");
-                console.log("========================================================\n");
-                appendToSession("agent", JSON.stringify(parsedResponse));
-            }
+			console.log(
+				`\n================ AGENT RESPONSE [${parsedResponse.mode ? parsedResponse.mode.toUpperCase() : "UNKNOWN"}] ================`,
+			);
 
-        } catch (error) {
-            console.error("\n❌ Processing error (model might not have returned valid JSON):", error.message);
-        }
+			if (parsedResponse.mode === "chat") {
+				console.log(parsedResponse.message);
+				console.log(
+					"========================================================\n",
+				);
+				appendToSession("agent", parsedResponse.message);
+			} else if (parsedResponse.mode === "patch") {
+				console.log(`💡 ${parsedResponse.message}`);
+				console.log(
+					"========================================================\n",
+				);
 
-        chatLoop();
-    });
+				if (
+					parsedResponse.filesToUpdate &&
+					parsedResponse.filesToUpdate.length > 0
+				) {
+					await applyPatches(
+						config.workspace.targetProject,
+						parsedResponse.filesToUpdate,
+					);
+				}
+				appendToSession(
+					"agent",
+					`[PATCH APPLIED]: ${parsedResponse.message}`,
+				);
+			} else {
+				console.log(parsedResponse.message || "No message provided.");
+				console.log(
+					"========================================================\n",
+				);
+				appendToSession("agent", JSON.stringify(parsedResponse));
+			}
+		} catch (error) {
+			console.error(
+				"\n❌ Processing error (model might not have returned valid JSON):",
+				error.message,
+			);
+		}
+
+		chatLoop();
+	});
 }
