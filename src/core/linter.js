@@ -16,7 +16,8 @@ export function runLinter(targetProject, filesToUpdate) {
             return resolve({ success: true });
         }
 
-        const command = `npx eslint ${jsFiles.join(' ')}`;
+        const command = `npx eslint ${jsFiles.join(" ")} --max-warnings=0`;
+
         const cwd = path.resolve(process.cwd(), targetProject);
 
         // Запускаем линтер в папке целевого проекта

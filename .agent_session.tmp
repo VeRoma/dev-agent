@@ -3,117 +3,21 @@
 
 ## 🔄 Журнал попыток и диалог
 
-🧑 **Разработчик:** Как устроены пропсы в @UIOverlay ?
+🧑 **Разработчик:** В файле @Scene добавь в конец файла функцию, которая объявляет переменную const myTest2 = 456, но нигде ее не использует.
 
-🤖 **Агент:** Компонент `UIOverlay` **не принимает никаких пропсов** напрямую.
+🤖 **Агент:** [PATCH APPLIED WITH ERRORS]: Добавлена функция testFunction2 с переменной myTest2 в конец файла Scene.tsx.
 
-Вместо передачи данных через пропсы, компонент является полностью автономным и извлекает все необходимые данные и методы из глобального состояния с помощью React Context (через кастомные хуки):
-
-1. **`useIntro()`** — извлекает логическое значение `booted`. Если приложение еще не загружено (`booted === false`), компонент просто возвращает `null` и не рендерится.
-2. **`useQuality()`** — извлекает текущий режим графики `mode` (`low`, `medium` или `high`) и функцию `setMode` для его изменения. Они используются в блоке «Render Settings» в правом нижнем углу интерфейса.
-
-Отсутствие пропсов также отражено в файле метаданных `UIOverlay.meta.json`, где поле `interfaces.inputs` представляет собой пустой массив `[]`.
-
-🧑 **Разработчик:** я думал над тем, что дальше можно сделать в проекте.
-что ты можешь посоветовать?
+🧑 **Разработчик:** [SYSTEM ERROR] Linter failed on the code you just wrote. Fix these errors and return the corrected files in "patch" mode:
 
 
-ты вообще можешь проанализировать - не требуется ли рефакторинг каких-то модулей?
+/home/roman/dev/my-webgl-site/app/components/Scene.tsx
+  74:10  warning  'testFunction' is defined but never used      @typescript-eslint/no-unused-vars
+  75:11  warning  'myTest' is assigned a value but never used   @typescript-eslint/no-unused-vars
+  78:10  warning  'testFunction2' is defined but never used     @typescript-eslint/no-unused-vars
+  79:11  warning  'myTest2' is assigned a value but never used  @typescript-eslint/no-unused-vars
 
-🤖 **Агент:** Отличный вопрос! Постоянный анализ кодовой базы — признак хорошей инженерной культуры.
-
-Я проанализировал текущий контекст проекта. В целом архитектура выглядит чистой: логика разделена на контексты (`QualityContext`, `IntroContext`), 3D и 2D слои разнесены по Z-индексу. Однако **есть несколько мест, которые явно просят рефакторинга**, а также интересные направления для дальнейшего развития.
-
-### 🛠 Что требует рефакторинга прямо сейчас (Технический долг)
-
-1. **Антипаттерн с прямым доступом к DOM (`Scene.tsx`)**
-   В компоненте `CameraController` есть код: `document.getElementById('camera-coords').innerText = ...`. 
-   *Почему это проблема:* Это нарушает изоляцию компонентов. 3D-сцена (Canvas) начинает жестко зависеть от верстки (HTML ID), что при изменении UI приведет к скрытым багам.
-   *Как исправить:* Для высокочастотных обновлений (60 FPS) без ререндера React лучше использовать **Zustand** (с подпиской `useStore.subscribe` вне цикла рендера) или передавать `MutableRefObject`, который биндится к HTML-элементу.
-
-2. **Декомпозиция `Scene.tsx`**
-   Файл `Scene.tsx` взял на себя слишком много: в нем объявлены `CameraController`, `PlatformWrapper`, `SceneContent` и сам `Scene`. 
-   *Как исправить:* Вынести `CameraController` и `PlatformWrapper` в отдельные файлы в папку `app/components/`. Это упростит чтение и тестирование.
-
-3. **Дублирование кода и мертвый код (`GlobeModel.tsx` и `GlobeGrid.tsx`)**
-   В контексте видны разные версии `GlobeGrid` и `GlobeModel` (в корне и в `app/components/`). Более того, в `app/components/GlobeModel.tsx` закомментирован блок `useFrame` с логикой синхронизации вращения, но импорты и переменные (`speedRef`, `entered`) остались. Нужно удалить мусор и оставить единый источник правды.
-
-4. **Отсутствие строгой типизации (TypeScript)**
-   В `Scene.tsx`: `const controlsRef = useRef<any>(null)`. Использование `any` лишает нас автокомплита методов `OrbitControls`.
-   *Как исправить:* Импортировать тип из `three-stdlib`: `import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'` и использовать `useRef<OrbitControlsImpl>(null)`.
-
----
-
-### 🚀 Что можно сделать дальше (Развитие проекта)
-
-1. **Оптимизация загрузки (Asset Management)**
-   У нас есть `IntroContext`, но насколько он честно отображает прогресс? Рекомендую интегрировать хук `useProgress` из `@react-three/drei`. Он будет выдавать точный процент загрузки `.glb` и `.hdr` файлов, чтобы интро-экран исчезал строго тогда, когда GPU скомпилировал шейдеры.
-
-2. **Умный Post-Processing**
-   В `QualityContext` есть флаг `postProcessing`. Если он `false` (low quality), нам нужно гарантировать, что `<Effects />` вообще не монтируется в дереве, иначе `EffectComposer` все равно будет потреблять ресурсы на дополнительные проходы рендера (render passes).
-
-3. **Интерактивность 3D-объектов (Raycasting)**
-   Сейчас пользователь может крутить камеру. Можно добавить `onClick` или `onPointerOver` на Землю (`GlobeModel`) или элементы платформы, чтобы выводить поверх них 2D-тултипы (используя компонент `<Html>` из `@react-three/drei`).
-
-4. **Мобильная адаптация и Touch-контролы**
-   Проверить, как `HeroRig` (движение за мышью) и `OrbitControls` ведут себя на мобильных устройствах. Обычно для тачпадов нужно подстраивать `azimuthalAngle` или отключать параллакс мыши, чтобы интерфейс не дергался от акселерометра.
-
-**С чего хочешь начать?** Можем взяться за очистку `Scene.tsx` от хардкода DOM и разбить его на модули, либо могу написать элегантный стор на Zustand для координат камеры!
-
-🧑 **Разработчик:** из Рефакторинга нравится всё - давай всё реализуем! из Развития - реализуем только 2 (Умный Post-Processing)
-
-🤖 **Агент:** [PATCH APPLIED]: Отличный выбор! Я реализовал все предложенные улучшения:
-
-1. **Глобальный стор для камеры (`cameraStore.ts`)**: Написан кастомный стор на базе паттерна Observer (без зависимостей вроде Zustand). Он позволяет обновлять координаты без доступа к DOM и без ререндера 3D-сцены.
-2. **Декомпозиция `Scene.tsx`**: `CameraController` и `PlatformWrapper` вынесены в отдельные модули.
-3. **Строгая типизация**: В `CameraController` добавлен тип `OrbitControlsImpl` из `three-stdlib`.
-4. **Умный Post-Processing**: Компонент `Effects` теперь монтируется условно в самом `Scene.tsx`, полностью освобождая ресурсы EffectComposer на низких настройках графики.
-
-⚠️ **ВАЖНОЕ ДЕЙСТВИЕ ДЛЯ ТЕБЯ**:
-Поскольку файла `UIOverlay.tsx` нет в текущем контексте, обнови его самостоятельно. Замени жесткий `<div id="camera-coords">` на использование стора через нативный хук React 18:
-tsx
-import { useSyncExternalStore } from 'react'
-import { cameraStore } from '../store/cameraStore'
-
-// Внутри компонента:
-const coords = useSyncExternalStore(cameraStore.subscribe, cameraStore.getCoords)
-// И выведи {coords} в верстку
-
-
-🧑 **Разработчик:** приложение не упало но "N" в кружочке (который стал красным и появилось сообщение "1 issue" ) (кстати, не знаю, что это такое и можно ли будет потом этот кружочек убрать с сайта на продакшене):
-
-
-1/1
-
-Next.js 16.1.6
-Turbopack
-Runtime Error
+✖ 4 problems (0 errors, 4 warnings)
 
 
 
-Missing getServerSnapshot, which is required for server-rendered content. Will revert to client rendering.
-app/components/UIOverlay.tsx (14:37) @ UIOverlay
-
-
-  12 | 	// МАГИЯ ЗДЕСЬ: Подписываемся на координаты камеры из нашего стора.
-  13 | 	// React сам перерисует этот компонент, когда стор обновится!
-> 14 | 	const coords = useSyncExternalStore(
-     | 	                                   ^
-  15 | 		cameraStore.subscribe,
-  16 | 		cameraStore.getCoords,
-  17 | 	);
-Call Stack
-50
-
-Show 49 ignore-listed frame(s)
-UIOverlay
-app/components/UIOverlay.tsx (14:37)
-1
-2
-Was this helpful?
-
-🤖 **Агент:** [PATCH APPLIED]: 1. **Красный кружочек с «N»** — это Next.js Dev Overlay. Индикатор работает только в режиме разработки и помогает отслеживать ошибки сборки. **В продакшене его не будет**, не переживай!
-
-2. **Суть ошибки**: Next.js делает предварительный рендер (SSR) даже для компонентов с директивой `"use client"`. Хуку `useSyncExternalStore` для серверного рендера нужен третий аргумент — `getServerSnapshot`. 
-
-Я исправил ошибку, передав `cameraStore.getCoords` в качестве третьего аргумента. Теперь Next.js знает, какое значение координат отрендерить на сервере при первой загрузке.
+🤖 **Агент:** [PATCH APPLIED SUCCESSFULLY]: Удалены тестовые неиспользуемые функции `testFunction` и `testFunction2` вместе с их переменными, чтобы устранить предупреждения линтера @typescript-eslint/no-unused-vars.

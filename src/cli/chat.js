@@ -169,20 +169,52 @@ function chatLoop() {
                 const filesContext = readFilesContent(relevantFiles, targetAbsolute);
                 const sessionContext = getSession();
 
-                const prompt = `
+//                 const prompt = `
+// CODE CONTEXT:
+// ${filesContext || "No files required."}
+
+// CURRENT SESSION:
+// ${sessionContext}
+
+// CRITICAL INSTRUCTIONS:
+// 1. You are an autonomous Senior Software Architect and Developer.
+// 2. You MUST respond ONLY with a valid JSON object. Do not use markdown wrappers like \`\`\`json.
+// 3. Choose your "mode" carefully:
+//    - Use "chat" mode if the user is asking a question, requesting an explanation, planning, or discussing architecture. In this mode, provide your detailed response in "message" (Markdown is allowed here) and leave "filesToUpdate" empty.
+//    - Use "patch" mode ONLY if the user explicitly asks to write, modify, or delete code, OR if you are fixing a SYSTEM ERROR. In this mode, "message" must be a short summary of what you changed, and "filesToUpdate" must contain the full updated file contents.
+// 4. The "message" field MUST be written in Russian.
+
+// Expected JSON format:
+// {
+//   "mode": "chat" | "patch",
+//   "message": "Detailed response (for chat) OR short action summary (for patch) in Russian.",
+//   "filesToUpdate": [
+//     {
+//       "path": "app/components/FileName.tsx",
+//       "content": "// ... entire file content here (not just diff, the FULL file) ..."
+//     }
+//   ]
+// }
+
+// Answer the developer's last message:
+// `;
+
+
+const prompt = `
 CODE CONTEXT:
 ${filesContext || "No files required."}
 
 CURRENT SESSION:
 ${sessionContext}
 
-CRITICAL INSTRUCTIONS:
+CRITICAL INSTRUCTIONS (READ CAREFULLY):
 1. You are an autonomous Senior Software Architect and Developer.
 2. You MUST respond ONLY with a valid JSON object. Do not use markdown wrappers like \`\`\`json.
 3. Choose your "mode" carefully:
-   - Use "chat" mode if the user is asking a question, requesting an explanation, planning, or discussing architecture. In this mode, provide your detailed response in "message" (Markdown is allowed here) and leave "filesToUpdate" empty.
-   - Use "patch" mode ONLY if the user explicitly asks to write, modify, or delete code, OR if you are fixing a SYSTEM ERROR. In this mode, "message" must be a short summary of what you changed, and "filesToUpdate" must contain the full updated file contents.
-4. The "message" field MUST be written in Russian.
+   - Use "chat" mode NOT ONLY for planning and discussing, BUT ALSO if a task is vague, risky, or if you lack the FULL original content of a file in the CODE CONTEXT. If in doubt, ask clarifying questions instead of breaking things.
+   - Use "patch" mode ONLY for clear, specific tasks where you have the full file context.
+4. THE "DO NO HARM" RULE FOR PATCHING: When updating a file, you MUST preserve 100% of the original formatting, indentation, styling (e.g. Tailwind classes), comments, and unrelated logic. NEVER hallucinate, truncate, or simplify existing code. If a file is too complex or monolithic to patch safely without losing formatting, DO NOT offload the mechanical work to the user (e.g., do not ask them to copy-paste snippets). Instead, use "chat" mode to warn the user about the complexity and propose a refactoring plan (e.g., decomposing the file) before implementing the requested feature.
+5. The "message" field MUST be written in Russian.
 
 Expected JSON format:
 {
