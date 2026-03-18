@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 
-export async function applyPatches(targetProject, filesToUpdate) {
+export async function applyPatches(targetProject, filesToUpdate = [], filesToDelete = []) {
     const backupDir = path.join(process.cwd(), '.agent_backup');
     if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
+    // 1. Обработка обновлений/созданий файлов
     for (const file of filesToUpdate) {
         const absolutePath = path.resolve(process.cwd(), targetProject, file.path);
         const safeRelativePath = file.path.replace(/[\/\\]/g, '__');
@@ -24,6 +25,27 @@ export async function applyPatches(targetProject, filesToUpdate) {
         console.log(`✅ File updated: ${file.path}`);
 
         try { exec(`code "${absolutePath}"`); } catch (error) {}
+    }
+
+    // 2. Обработка удалений
+    for (const file of filesToDelete) {
+        const absolutePath = path.resolve(process.cwd(), targetProject, file.path);
+        const safeRelativePath = file.path.replace(/[\/\\]/g, '__');
+
+        if (fs.existsSync(absolutePath)) {
+            // Обязательно делаем бэкап перед удалением!
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const backupPath = path.join(backupDir, `${safeRelativePath}_${timestamp}.bak`);
+            
+            fs.copyFileSync(absolutePath, backupPath);
+            console.log(`💾 Backup saved (before delete): .agent_backup/${path.basename(backupPath)}`);
+            
+            // Физически удаляем файл
+            fs.unlinkSync(absolutePath);
+            console.log(`🗑️ File deleted: ${file.path}`);
+        } else {
+            console.log(`⚠️ Skip deletion: File not found ${file.path}`);
+        }
     }
 }
 

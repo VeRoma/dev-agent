@@ -225,6 +225,11 @@ Expected JSON format:
       "path": "app/components/FileName.tsx",
       "content": "// ... entire file content here (not just diff, the FULL file) ..."
     }
+  ],
+  "filesToDelete": [
+    {
+      "path": "app/components/OldFile.tsx"
+    }
   ]
 }
 
@@ -249,11 +254,16 @@ Answer the developer's last message:
                     console.log(`💡 ${parsedResponse.message}`);
                     console.log("========================================================\n");
                     
-                    if (parsedResponse.filesToUpdate && parsedResponse.filesToUpdate.length > 0) {
-                        await applyPatches(config.workspace.targetProject, parsedResponse.filesToUpdate);
+                    const toUpdate = parsedResponse.filesToUpdate || [];
+                    const toDelete = parsedResponse.filesToDelete || [];
+
+                    if (toUpdate.length > 0 || toDelete.length > 0) {
+                        // Передаем в патчер и файлы для обновления, и файлы для удаления
+                        await applyPatches(config.workspace.targetProject, toUpdate, toDelete);
                         
-                        console.log("🔍 Checking code quality (ESLint)...");
-                        const lintResult = await runLinter(config.workspace.targetProject, parsedResponse.filesToUpdate);
+                        console.log("🔍 Checking code quality...");
+                        // Линтеру передаем ТОЛЬКО обновленные файлы (удаленные проверять не нужно)
+                        const lintResult = await runLinter(config.workspace.targetProject, toUpdate);
 
                         if (lintResult.success) {
                             console.log("✨ Code is clean! No errors found.");
@@ -271,8 +281,8 @@ Answer the developer's last message:
 
                             console.log(`⚠️ Linter found errors. Initiating Auto-Healing...`);
                             
-                            // Добавляем файлы с ошибками в контекст (чтобы ИИ их не забыл)
-                            const absoluteUpdatedPaths = parsedResponse.filesToUpdate.map(f => path.resolve(process.cwd(), config.workspace.targetProject, f.path));
+                            // Добавляем файлы с ошибками в контекст (используем toUpdate вместо старого parsedResponse.filesToUpdate)
+                            const absoluteUpdatedPaths = toUpdate.map(f => path.resolve(process.cwd(), config.workspace.targetProject, f.path));
                             relevantFiles = [...new Set([...relevantFiles, ...absoluteUpdatedPaths])];
 
                             // Фиксируем неудачу в истории и отправляем системный промпт
@@ -283,6 +293,7 @@ Answer the developer's last message:
                         }
                     } else {
                         break; // Патч пустой
+                    
                     }
                 } else {
                     console.log(parsedResponse.message || "No message provided.");

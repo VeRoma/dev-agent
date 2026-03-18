@@ -1,0 +1,56 @@
+import React, { useRef, useLayoutEffect, useMemo } from 'react'
+import { useGLTF } from '@react-three/drei'
+import { useFrame, useThree } from '@react-three/fiber'
+import * as THREE from 'three'
+
+export function LogoModel() {
+    const { scene } = useGLTF('/logo.glb')
+    const clonedScene = useMemo(() => scene.clone(), [scene])
+    const meshRef = useRef<THREE.Group>(null)
+    const { viewport } = useThree()
+
+    // Настройка материалов ПЕРЕД отрисовкой
+    useLayoutEffect(() => {
+        clonedScene.traverse((child) => {
+            // Проверяем, является ли объект частью сетки (Mesh)
+            if ((child as THREE.Mesh).isMesh) {
+                const mesh = child as THREE.Mesh
+
+                // Вращаем логотип для лучшего восприятия
+                // mesh.rotation.x = -Math.PI / 2
+                // mesh.rotation.y = Math.PI / 2
+
+                mesh.material = new THREE.MeshPhysicalMaterial({
+                    color: '#000000',        // Абсолютно черный цвет
+                    roughness: 0.15,         // Немного матовый, чтобы блики "растекались"
+                    metalness: 0.9,          // 100% металл
+
+                    // Убираем собственное свечение, пусть работает внешний свет!
+                    emissive: '#00ccff',
+                    emissiveIntensity: 0.3,
+
+                    // Добавляем слой "лака" для двойных бликов
+                    clearcoat: 1.0,
+                    clearcoatRoughness: 0.1
+                })
+                mesh.castShadow = true
+                mesh.receiveShadow = true
+            }
+        })
+    }, [clonedScene])
+
+    // Анимация: Вращение каждый кадр
+    useFrame((state, delta) => {
+        if (meshRef.current) {
+            // meshRef.current.rotation.y += delta * 0.2 // Медленное вращение вокруг оси Y
+            // Добавим легкое покачивание, как будто он левитирует
+            // meshRef.current.position.y = Math.sin(state.clock.elapsedTime) * 0.1
+        }
+    })
+
+    const scale = viewport.aspect < 1 ? 0.7 : 1.0
+
+    return <primitive ref={meshRef} object={clonedScene} scale={scale} />
+}
+
+useGLTF.preload('/logo.glb')
