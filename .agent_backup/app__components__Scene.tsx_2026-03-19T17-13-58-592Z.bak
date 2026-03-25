@@ -1,0 +1,72 @@
+'use client'
+
+import { Canvas } from '@react-three/fiber'
+import { Stats } from '@react-three/drei'
+import { Suspense } from 'react'
+import * as THREE from 'three'
+
+import { HeroAsset } from './HeroAsset'
+import { Effects } from './Effects'
+import { EnvironmentSetup } from './EnvironmentSetup'
+import { Lights } from './Lights'
+import { RealStarsBackground } from './RealStarsBackground'
+import { RealStars } from './RealStars'
+import { useQuality } from '../context/QualityContext'
+
+import { CameraController } from './CameraController'
+import { PlatformWrapper } from './PlatformWrapper'
+
+function SceneContent() {
+    const { dpr, shadows, postProcessing } = useQuality()
+
+    return (
+        <Canvas
+            shadows={shadows}
+            dpr={dpr}
+            camera={{ position: [0, 0, 15], fov: 50, near: 0.1 }}
+            gl={{
+                antialias: true,
+                toneMapping: THREE.ACESFilmicToneMapping,
+                toneMappingExposure: 1.0,
+            }}
+            onCreated={(state) => {
+                state.gl.setClearColor('#000000')
+            }}
+        >
+            {/* ДОБАВЛЯЕМ СЧЕТЧИК ПРОИЗВОДИТЕЛЬНОСТИ */}
+            <Stats className="!absolute !top-auto !bottom-6 !left-6" />
+
+            <color attach="background" args={['#000000']} />
+            <fog attach="fog" args={['#000000', 5, 20]} />
+
+            <Lights />
+            <Suspense fallback={null}><EnvironmentSetup /></Suspense>
+
+            {/* СЛОЙ 1: HDR-Фон (Скайбокс) */}
+            <Suspense fallback={null}>
+                <RealStarsBackground />
+            </Suspense>
+
+            {/* СЛОЙ 2: Реальные звезды (каталог) */}
+            <RealStars />
+
+            {/* ОБЕРТКА ДЛЯ ПЛАТФОРМЫ */}
+            <PlatformWrapper />
+
+            <Suspense fallback={null}><HeroAsset /></Suspense>
+
+            <CameraController />
+
+            {/* СЛОЙ ЭФФЕКТОВ ПОСТ-ОБРАБОТКИ (Монтируется только при включенном postProcessing) */}
+            {postProcessing && <Effects />}
+        </Canvas>
+    )
+}
+
+export default function Scene() {
+    return (
+        <div className="h-screen w-full bg-black">
+            <SceneContent />
+        </div>
+    )
+}

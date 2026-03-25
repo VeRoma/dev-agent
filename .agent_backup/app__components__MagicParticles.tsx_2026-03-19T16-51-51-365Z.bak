@@ -1,0 +1,296 @@
+'use client'
+
+import { useRef, useMemo, useEffect, useState } from 'react'
+import { useFrame, useThree } from '@react-three/fiber'
+import * as THREE from 'three'
+import { GPUComputationRenderer } from 'three-stdlib'
+import { useControls, button } from 'leva'
+
+const WIDTH = 128
+const PARTICLES_COUNT = WIDTH * WIDTH
+
+const computeVelocityShader = `
+    uniform float uDelta;
+    uniform float uGravity;
+    uniform float uVortex;
+    uniform float uVacuum;
+    uniform float uCoreFriction;
+    uniform float uGlobalFriction;
+
+    void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        vec3 pos = texture2D(texturePosition, uv).xyz;
+        vec3 vel = texture2D(textureVelocity, uv).xyz;
+
+        vec3 dir = -pos; 
+        float dist = length(dir);
+        
+        if (dist > 0.05) {
+            vec3 dirNorm = normalize(dir);
+            
+            // 1. Умеренная гравитация
+            float force = uGravity / (dist * dist + 1.0);
+            vel += dirNorm * force * uDelta;
+
+            // 2. Легкое закручивание (vortex), чтобы сохранить спираль
+            vec3 up = vec3(0.0, 1.0, 0.0);
+            vec3 vortexDir = normalize(cross(dirNorm, up));
+            vel += vortexDir * uVortex * uDelta;
+            
+            // 3. Мягкий пылесос
+            vel += dirNorm * uVacuum * uDelta;
+            
+            // 4. ТОРМОЖЕНИЕ В ЦЕНТРЕ: если частица ближе 2.0 единиц, мы жестко гасим ее скорость,
+            // чтобы она "прилипла" к ядру и не пролетала насквозь.
+            float coreDamping = smoothstep(2.0, 0.0, dist); 
+            vel *= (1.0 - coreDamping * uCoreFriction * uDelta);
+        } else {
+            // Если частица в самом центре - останавливаем ее полностью
+            vel = vec3(0.0);
+            // Возвращаем в точный 0, чтобы они не разлетались
+            pos = vec3(0.0); 
+        }
+
+        // Общее космическое трение
+        vel *= (1.0 - uGlobalFriction * uDelta);
+
+        gl_FragColor = vec4(vel, 1.0);
+    }
+`
+
+const computePositionShader = `
+    uniform float uDelta;
+    void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        vec3 pos = texture2D(texturePosition, uv).xyz;
+        vec3 vel = texture2D(textureVelocity, uv).xyz;
+
+        // Обновляем позицию на основе скорости и времени
+        pos += vel * uDelta;
+
+        gl_FragColor = vec4(pos, 1.0);
+    }
+`
+
+const fillTextures = (texturePosition: THREE.DataTexture, textureVelocity: THREE.DataTexture) => {
+    const posArray = texturePosition.image.data as Float32Array
+    const velArray = textureVelocity.image.data as Float32Array
+
+    for (let k = 0, kl = posArray.length; k < kl; k += 4) {
+        // Случайная позиция на сфере с небольшим разбросом
+        const phi = Math.random() * Math.PI * 2
+        const costheta = Math.random() * 2 - 1
+        const theta = Math.acos(costheta)
+        const r = 10.0 + (Math.random() * 2.0)
+
+        const x = r * Math.sin(theta) * Math.cos(phi)
+        const y = r * Math.sin(theta) * Math.sin(phi)
+        const z = r * Math.cos(theta)
+
+        posArray[k + 0] = x
+        posArray[k + 1] = y
+        posArray[k + 2] = z
+        posArray[k + 3] = 1.0
+
+        // Вычисляем тангенциальную скорость для стартовой орбиты
+        const posVec = new THREE.Vector3(x, y, z)
+        const upVec = new THREE.Vector3(0, 1, 0)
+        
+        // Защита от вырождения вектора, если точка находится строго на полюсе
+        if (Math.abs(costheta) > 0.99) {
+            upVec.set(1, 0, 0)
+        }
+        
+        // Перпендикуляр к вектору позиции и оси Y
+        const tangent = new THREE.Vector3().crossVectors(posVec, upVec).normalize()
+        
+        // Стартовая орбитальная скорость
+        const speed = 1.0 + Math.random() * 2.0
+        tangent.multiplyScalar(speed)
+
+        // Добавляем шум к вектору скорости для хаотичности вихря
+        velArray[k + 0] = tangent.x + (Math.random() - 0.5) * 5.0
+        velArray[k + 1] = tangent.y + (Math.random() - 0.5) * 5.0
+        velArray[k + 2] = tangent.z + (Math.random() - 0.5) * 5.0
+        velArray[k + 3] = 1.0
+    }
+}
+
+export function MagicParticles() {
+    const { gl } = useThree()
+    const materialRef = useRef<THREE.ShaderMaterial>(null)
+    const gpuComputeRef = useRef<GPUComputationRenderer | null>(null)
+    
+    // Используем eslint-disable для обхода строгой типизации внутренних классов three-stdlib
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const positionVariableRef = useRef<any>(null)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const velocityVariableRef = useRef<any>(null)
+
+    const [restartTrigger, setRestartTrigger] = useState(0)
+
+    const physics = useControls('GPGPU Physics', {
+        gravity: { value: 300, min: 0, max: 2000, step: 10 },
+        vortex: { value: 5, min: 0, max: 50, step: 0.1 },
+        vacuum: { value: 5, min: 0, max: 50, step: 0.1 },
+        coreFriction: { value: 15, min: 0, max: 50, step: 0.5 },
+        globalFriction: { value: 0.8, min: 0, max: 5, step: 0.01 },
+        Restart: button(() => setRestartTrigger(prev => prev + 1))
+    })
+
+    useEffect(() => {
+        if (restartTrigger > 0) {
+            if (gpuComputeRef.current && positionVariableRef.current && velocityVariableRef.current) {
+                const posTex = positionVariableRef.current.initialValueTexture as THREE.DataTexture
+                const velTex = velocityVariableRef.current.initialValueTexture as THREE.DataTexture
+                
+                fillTextures(posTex, velTex)
+                posTex.needsUpdate = true
+                velTex.needsUpdate = true
+                
+                const error = gpuComputeRef.current.init()
+                if (error !== null) {
+                    console.error('GPUComputationRenderer re-init error:', error)
+                }
+            }
+        }
+    }, [restartTrigger])
+
+    // Массив UV-координат (reference) для связи вершин буфера с пикселями DataTexture
+    const reference = useMemo(() => {
+        const ref = new Float32Array(PARTICLES_COUNT * 2)
+        for (let i = 0; i < PARTICLES_COUNT; i++) {
+            const x = (i % WIDTH) / WIDTH
+            const y = Math.floor(i / WIDTH) / WIDTH
+            ref[i * 2 + 0] = x
+            ref[i * 2 + 1] = y
+        }
+        return ref
+    }, [])
+
+    const uniforms = useMemo(() => ({
+        uTexturePosition: { value: null },
+    }), [])
+
+    useEffect(() => {
+        // Инициализация вычислительного рендерера GPU
+        const gpuCompute = new GPUComputationRenderer(WIDTH, WIDTH, gl)
+        
+        const dtPosition = gpuCompute.createTexture()
+        const dtVelocity = gpuCompute.createTexture()
+
+        // Заполняем начальные данные сферического спавна
+        fillTextures(dtPosition, dtVelocity)
+
+        const velocityVariable = gpuCompute.addVariable('textureVelocity', computeVelocityShader, dtVelocity)
+        const positionVariable = gpuCompute.addVariable('texturePosition', computePositionShader, dtPosition)
+
+        // Устанавливаем циклические зависимости переменных друг от друга
+        gpuCompute.setVariableDependencies(velocityVariable, [positionVariable, velocityVariable])
+        gpuCompute.setVariableDependencies(positionVariable, [positionVariable, velocityVariable])
+
+        velocityVariable.material.uniforms.uDelta = { value: 0.0 }
+        // Оставляем базовые значения инициализации, чтобы не добавлять physics в зависимости хука
+        velocityVariable.material.uniforms.uGravity = { value: 300.0 }
+        velocityVariable.material.uniforms.uVortex = { value: 5.0 }
+        velocityVariable.material.uniforms.uVacuum = { value: 5.0 }
+        velocityVariable.material.uniforms.uCoreFriction = { value: 15.0 }
+        velocityVariable.material.uniforms.uGlobalFriction = { value: 0.8 }
+        
+        positionVariable.material.uniforms.uDelta = { value: 0.0 }
+
+        const error = gpuCompute.init()
+        if (error !== null) {
+            console.error('GPUComputationRenderer init error:', error)
+        }
+
+        gpuComputeRef.current = gpuCompute
+        positionVariableRef.current = positionVariable
+        velocityVariableRef.current = velocityVariable
+        
+    }, [gl])
+
+    useFrame((state, delta) => {
+        if (!gpuComputeRef.current || !positionVariableRef.current || !velocityVariableRef.current) return
+
+        // Ограничиваем шаг времени во избежание взрыва симуляции при лагах
+        const safeDelta = Math.min(delta, 0.05) 
+
+        // Обновляем uniforms физики из Leva
+        const velMat = velocityVariableRef.current.material
+        velMat.uniforms.uDelta.value = safeDelta
+        velMat.uniforms.uGravity.value = physics.gravity
+        velMat.uniforms.uVortex.value = physics.vortex
+        velMat.uniforms.uVacuum.value = physics.vacuum
+        velMat.uniforms.uCoreFriction.value = physics.coreFriction
+        velMat.uniforms.uGlobalFriction.value = physics.globalFriction
+
+        positionVariableRef.current.material.uniforms.uDelta.value = safeDelta
+
+        // Вычисляем новый кадр физики на GPU
+        gpuComputeRef.current.compute()
+
+        // Передаем текстуру с новыми позициями в материал частиц для рендера
+        if (materialRef.current) {
+            const currentPositionTexture = gpuComputeRef.current.getCurrentRenderTarget(positionVariableRef.current).texture
+            materialRef.current.uniforms.uTexturePosition.value = currentPositionTexture
+        }
+    })
+
+    return (
+        // frustumCulled={false} обязателен для GPGPU, так как реальные позиции вычисляются в шейдере,
+        // а базовый boundingBox состоит из нулей.
+        <points position={[0, -0.95, 0]} frustumCulled={false}>
+            <bufferGeometry>
+                <bufferAttribute
+                    attach="attributes-position"
+                    args={[new Float32Array(PARTICLES_COUNT * 3), 3]}
+                />
+                <bufferAttribute
+                    attach="attributes-reference"
+                    args={[reference, 2]}
+                />
+            </bufferGeometry>
+            <shaderMaterial
+                ref={materialRef}
+                transparent={true}
+                depthWrite={false}
+                blending={THREE.AdditiveBlending}
+                uniforms={uniforms}
+                vertexShader={`
+                    uniform sampler2D uTexturePosition;
+                    attribute vec2 reference;
+                    varying float vAlpha;
+
+                    void main() {
+                        // Читаем актуальную позицию частицы из FBO текстуры
+                        vec3 pos = texture2D(uTexturePosition, reference).xyz;
+
+                        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        gl_Position = projectionMatrix * mvPosition;
+
+                        // Устанавливаем фиксированный размер для дебага
+                        gl_PointSize = 6.0;
+                        
+                        // Делаем частицы принудительно видимыми
+                        vAlpha = 1.0;
+                    }
+                `}
+                fragmentShader={`
+                    varying float vAlpha;
+
+                    void main() {
+                        // Мягкий светящийся круг (простая SDF-функция)
+                        float d = distance(gl_PointCoord, vec2(0.5));
+                        float strength = 0.05 / d - 0.1;
+                        strength = clamp(strength, 0.0, 1.0);
+
+                        // Эпичный циановый цвет, как в промпте Дзен-материализации
+                        vec3 color = vec3(0.0, 0.8, 1.0);
+                        gl_FragColor = vec4(color, strength * vAlpha);
+                    }
+                `}
+            />
+        </points>
+    )
+}
