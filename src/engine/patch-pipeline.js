@@ -28,7 +28,7 @@ export async function runPatch(parsed, { targetProject, targetAbsolute }) {
         if (result.rejected.length > 0) return { outcome: 'rejected', rejected: result.rejected };
     }
 
-    if (commands.length > 0) await runCommands(commands, targetAbsolute);
+    if (commands.length > 0) await runCommands(commands, { cwd: targetAbsolute });
 
     if (toUpdate.length === 0) return { outcome: 'completed' };
 

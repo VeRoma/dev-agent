@@ -3,15 +3,15 @@
     "orchestratorModel": "gemini-3-flash-preview",
     "tiers": {
       "local": "qwen2.5-coder:7b-instruct",
-      "fast": "deepseek-chat",
-      "pro": "gemini-3-pro-preview",
-      "arch": "claude-sonnet-4-5"
+      "fast": "deepseek-flash",
+      "pro": "gemini-3.1-pro-preview",
+      "arch": "claude-sonnet-5-5"
     },
     "cloudFallbacks": [
-      "gemini-3-pro-preview",
+      "gemini-3.1-pro-preview",
       "gemini-3-flash-preview",
       "gemini-2.5-pro",
-      "claude-sonnet-4-5"
+      "claude-sonnet-5-5"
     ]
   },
   "workspace": {

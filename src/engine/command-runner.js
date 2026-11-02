@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import { classifyCommand } from '../safety/command-guard.js';
 import { confirm } from './io.js';
 import { appendToSession } from './session.js';
@@ -10,13 +11,21 @@ export function normalizeCommand(command) {
     return String(command ?? '').trim().replace(/\s+/g, ' ');
 }
 
+/** Default runner: the command's output goes straight to the developer's terminal. */
+function runInShell(command, { cwd }) {
+    execSync(command, { cwd, stdio: 'inherit' });
+}
+
 /**
  * Runs a batch of commands in the target directory.
  * - safe commands run automatically
  * - risky commands require explicit confirmation
  * - a failing command stops the batch
+ * Every outcome is written to the session, so the model sees what happened.
+ * @param {string[]} commands
+ * @param {{cwd: string, run?: (command: string, opts: {cwd: string}) => any}} options
  */
-export async function runCommands(commands, { cwd, run } = {}) {
+export async function runCommands(commands, { cwd, run = runInShell } = {}) {
     const executed = [];
     const skipped = [];
     const failed = [];
@@ -24,12 +33,16 @@ export async function runCommands(commands, { cwd, run } = {}) {
     for (const raw of commands ?? []) {
         const command = normalizeCommand(raw);
         if (!command) continue;
+        console.log(`\n   > ${command}`);
 
         const verdict = classifyCommand(command);
         if (verdict.level !== 'safe') {
-            const approved = await confirm(`Run command: ${command}?`);
+            const risk = verdict.warning ? ` (риск: ${verdict.warning})` : '';
+            const approved = await confirm(`🛡️ Команда вне белого списка${risk}. Выполнить «${command}»? (y/N): `);
             if (!approved) {
-                skipped.push({ command, reason: verdict.reason });
+                console.log('⛔ Команда пропущена.');
+                skipped.push({ command, reason: verdict.warning });
+                appendToSession('agent', `[COMMAND DENIED]: ${command}`);
                 continue;
             }
         }
@@ -37,9 +50,11 @@ export async function runCommands(commands, { cwd, run } = {}) {
         try {
             await run(command, { cwd });
             executed.push(command);
+            appendToSession('agent', `[COMMAND EXECUTED]: ${command}`);
         } catch (error) {
+            console.log('❌ Command failed.');
             failed.push({ command, error });
-            appendToSession(`Command failed: ${command} -> ${error?.message ?? error}`);
+            appendToSession('agent', `[COMMAND FAILED]: ${command}\nError: ${error?.message ?? error}`);
             break;
         }
     }

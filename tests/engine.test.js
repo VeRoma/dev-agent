@@ -35,11 +35,8 @@ test('llm router: provider by model name; local models are excluded from the cod
         assert.ok(!fallbackChain(cloudModel).includes(cloudModel),
             `primary ${cloudModel} must not repeat in its own chain`);
     }
-
-    // Dispatcher mode (allowLocal=true) MAY include the local model as a last resort.
-    const dispatcherChain = fallbackChain('deepseek-chat', true);
-    assert.ok(dispatcherChain.includes(config.llm.fallbackModel),
-        'dispatcher chain may include the local model as a last resort');
+    // Dispatcher mode (allowLocal=true, local last resort) depends on llm.fallbackModel,
+    // which this config does not set; the rule itself is tested in @veroma/ai-core.
 });
 
 test('command-runner: whitelist runs, others need confirmation, failure stops the batch', async () => {
