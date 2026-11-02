@@ -17,7 +17,7 @@ function switchProject(selector) {
         console.log('\n⚠️ Такого проекта нет. Пример: /p 3, /p имя-проекта, /p self');
         return;
     }
-    stopDevServer();
+    stopDevServer({ quiet: true });
     try {
         openProject(name);
     } catch (error) {

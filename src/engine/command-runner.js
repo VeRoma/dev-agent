@@ -11,6 +11,11 @@ export function normalizeCommand(command) {
     return String(command ?? '').trim().replace(/\s+/g, ' ');
 }
 
+/** Test-suite runs; after a code change the post-patch checks run the tests anyway. */
+export function isTestCommand(command) {
+    return /^(npm (test|t|run test)|node --test)(\s|$)/.test(normalizeCommand(command));
+}
+
 /** Default runner: the command's output goes straight to the developer's terminal. */
 function runInShell(command, { cwd }) {
     execSync(command, { cwd, stdio: 'inherit' });

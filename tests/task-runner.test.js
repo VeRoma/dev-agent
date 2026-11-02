@@ -104,7 +104,7 @@ test('e2e patch: junk paths dropped; executor gets task AND plan; placeholder re
         'Sure, here is the patch: {oops this is not json',
         { mode: 'patch', message: 'Добавил multiply', plan: ['1. добавляю функцию'],
           filesToUpdate: [{ path: 'src/a.js', content: 'export const a = 1;\nexport function hello() { return "hi"; }\nexport const multiply = (x, y) => x * y;\n' }],
-          commandsToRun: ['rm -rf src', 'node --check src/a.js'] },
+          commandsToRun: ['rm -rf src', 'npm test', 'node --check src/a.js'] },
     ];
     const log = mockNetwork({
         orchestrator: decision({ files: ['src/a.js', '../../etc/passwd', 'ghost.js'], subtaskPrompt: 'ORCHESTRATOR PLAN: add multiply(x, y)' }),
@@ -127,6 +127,7 @@ test('e2e patch: junk paths dropped; executor gets task AND plan; placeholder re
     assert.ok(session.includes('[COMMAND DENIED]: rm -rf src'));
     assert.ok(fs.existsSync(path.join(dir, 'src/a.js')), 'rm -rf src must NOT have run');
     assert.ok(session.includes('[COMMAND EXECUTED]: node --check src/a.js'));
+    assert.ok(!session.includes(': npm test'), 'tests run once, in the post-patch checks, not as a model command');
     assert.ok(session.includes('[PATCH APPLIED SUCCESSFULLY]'), 'missing ESLint/tests must not trigger self-healing');
     assert.ok(fs.readFileSync(getStatePaths(dir).mapFile, 'utf-8').includes('multiply'));
 });

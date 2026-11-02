@@ -1,11 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { config } from '../src/config.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { config, setTargetProject } from '../src/config.js';
 import { fallbackChain, pickProvider, isLocalModel } from '../src/llm/index.js';
-import { normalizeCommand, runCommands } from '../src/engine/command-runner.js';
+import { normalizeCommand, runCommands, isTestCommand } from '../src/engine/command-runner.js';
 import { setConfirmHandler } from '../src/engine/io.js';
 import { runLinter } from '../src/engine/linter.js';
 import { runTests } from '../src/engine/tester.js';
+
+// Commands log to the session of the selected project: a temp one, never a real project
+setTargetProject(fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-engine-')));
 
 test('llm router: provider by model name; local models are excluded from the code-execution chain', () => {
     // Provider detection by model name.
@@ -62,6 +68,15 @@ test('command-runner: whitelist runs, others need confirmation, failure stops th
         run: async () => { throw new Error('boom'); },
     });
     assert.equal(failing.failed.length, 1);
+});
+
+test('command-runner: test-suite commands are recognized (post-patch checks run them anyway)', () => {
+    for (const cmd of ['npm test', '  npm   test ', 'npm t', 'npm run test', 'npm test -- --watch=false', 'node --test', 'node --test tests/a.test.js']) {
+        assert.equal(isTestCommand(cmd), true, cmd);
+    }
+    for (const cmd of ['npm install', 'npm run test:e2e', 'npm run lint', 'node --check src/a.js', 'npm tests']) {
+        assert.equal(isTestCommand(cmd), false, cmd);
+    }
 });
 
 test('checks: missing ESLint / ESLint config / test script are warnings, not code errors', async () => {

@@ -8,16 +8,16 @@ import { handleCommand } from './commands.js';
 import { readPromptViaEditor } from './editor-input.js';
 import { classifyExternalTask, EXTERNAL_COMMANDS } from './external-task.js';
 
-let busy = false; // агент выполняет задачу (из чата или авто-исправление после падения)
+let busy = false; // the agent is running a task (from the chat or a crash auto-fix)
 
-/** Задача агента: никогда не две одновременно; после неё снова приглашение. */
+/** An agent task: never two at once; the prompt is shown again afterwards. */
 async function runExclusive(task) {
     if (busy) return false;
     busy = true;
     try {
         await task();
     } catch (error) {
-        // Ошибка одной задачи не должна убивать весь цикл
+        // One failed task must not kill the whole loop
         console.error('\n❌ [ERROR] Неожиданная ошибка:', error.message);
     } finally {
         busy = false;
@@ -44,7 +44,7 @@ function chatLoop() {
 
             if (['exit', 'quit'].includes(text.toLowerCase())) {
                 console.log('⚙️ [SYSTEM] Агент отключается. До связи!');
-                stopDevServer();
+                stopDevServer({ quiet: true });
                 closeTerminal();
                 return;
             }
@@ -57,7 +57,7 @@ function chatLoop() {
                 return;
             }
             runExclusive(() => handleInput(text));
-        }, resolve); // ввод закрыт (exit, Ctrl+D, конец потока)
+        }, resolve); // input closed (exit, Ctrl+D, end of stream)
         showPrompt();
     });
 }

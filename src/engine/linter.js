@@ -41,8 +41,7 @@ function hasEslintConfig(projectRoot) {
  * Missing ESLint / config are warnings, not code errors.
  */
 export async function runLinter(projectRoot) {
-    const { targetAbsolute } = getStatePaths();
-    const root = projectRoot ?? targetAbsolute;
+    const root = getStatePaths(projectRoot).targetAbsolute;
 
     if (!hasEslintConfig(root)) {
         return { ok: true, warnings: ['ESLint config not found — linter skipped'], output: '' };

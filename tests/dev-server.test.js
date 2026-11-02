@@ -76,3 +76,17 @@ test('supervisor: while the agent is busy, auto-fix is skipped (never two tasks 
     }
     assert.equal(tasks.length, 0);
 });
+
+test('dev-server: stopping with nothing running warns only on a manual /stop', () => {
+    const lines = [];
+    const realLog = console.log;
+    console.log = (...args) => lines.push(args.join(' '));
+    try {
+        stopDevServer({ quiet: true });
+        assert.equal(lines.length, 0, 'exit / project switch / restart stay silent');
+        stopDevServer();
+        assert.equal(lines.length, 1);
+    } finally {
+        console.log = realLog;
+    }
+});

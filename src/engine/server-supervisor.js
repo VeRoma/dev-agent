@@ -5,9 +5,9 @@ import { isSelfWorktree } from '../project/self-workspace.js';
 const CRASH_PROMPT = '[SYSTEM ERROR] Целевой процесс упал с ошибкой. Проанализируй лог, найди проблемный файл и сгенерируй патч с исправлением кода:';
 
 /**
- * Падение целевого процесса: с согласия разработчика (без терминала — сразу) агент пытается исправить код.
- * Пока агент занят другой задачей, исправление не запускается (правки не идут параллельно).
- * @param {(prompt: string) => Promise<void>} runTask обычно processAgentTask (передаётся снаружи: нет циклического импорта)
+ * Target process crash: with the developer's consent (no terminal: right away) the agent tries to fix the code.
+ * While the agent is busy with another task the fix is not started (edits never run in parallel).
+ * @param {(prompt: string) => Promise<void>} runTask usually processAgentTask (passed in: avoids a circular import)
  */
 export async function handleCrash(errorLog, runTask) {
     const started = await runExclusive(async () => {
@@ -34,7 +34,7 @@ export function startSupervisedServer(targetProject, runTask) {
 
 export function restartSupervisedServer(targetProject, runTask) {
     console.log('\n🔄 Агент автономно перезапускает целевой процесс...');
-    stopDevServer();
+    stopDevServer({ quiet: true });
     startSupervisedServer(targetProject, runTask);
 }
 

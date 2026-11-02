@@ -1,23 +1,23 @@
 import path from 'path';
 import { applyPatches } from '../project/patcher.js';
-import { runCommands } from './command-runner.js';
+import { runCommands, isTestCommand } from './command-runner.js';
 import { runProjectChecks } from './checks.js';
 
 /**
- * Один проход «патч»: применить файлы -> выполнить команды -> проверить код.
- * Возвращает исход, а решение (повторить / остановиться) принимает оркестратор.
+ * One "patch" pass: apply files -> run commands -> check the code.
+ * Returns the outcome; the orchestrator decides whether to retry or stop.
  *
  * outcome:
- *   'empty'        — в ответе нечего делать
- *   'rejected'     — защита отклонила патч, на диск ничего не записано
- *   'completed'    — изменений кода не было (аудит / только команды)
- *   'clean'        — патч применён, линтер и тесты прошли
- *   'check_failed' — патч применён, проверки нашли ошибки
+ *   'empty'        — nothing to do in the response
+ *   'rejected'     — the guard rejected the patch, nothing was written to disk
+ *   'completed'    — no code changes (audit / commands only)
+ *   'clean'        — patch applied, linter and tests passed
+ *   'check_failed' — patch applied, checks found errors
  */
 export async function runPatch(parsed, { targetProject, targetAbsolute }) {
     const toUpdate = parsed.filesToUpdate || [];
     const toDelete = parsed.filesToDelete || [];
-    const commands = parsed.commandsToRun || [];
+    let commands = parsed.commandsToRun || [];
 
     if (toUpdate.length === 0 && toDelete.length === 0 && commands.length === 0) {
         return { outcome: 'empty' };
@@ -26,6 +26,15 @@ export async function runPatch(parsed, { targetProject, targetAbsolute }) {
     if (toUpdate.length > 0 || toDelete.length > 0) {
         const result = await applyPatches(targetProject, toUpdate, toDelete);
         if (result.rejected.length > 0) return { outcome: 'rejected', rejected: result.rejected };
+    }
+
+    // The checks below run the tests after a code change: do not run them twice
+    if (toUpdate.length > 0) {
+        const tests = commands.filter(isTestCommand);
+        if (tests.length > 0) {
+            console.log(`\n⏭️ Пропускаю ${tests.map(c => `«${c}»`).join(', ')}: тесты запустятся в проверке после патча.`);
+            commands = commands.filter(c => !isTestCommand(c));
+        }
     }
 
     if (commands.length > 0) await runCommands(commands, { cwd: targetAbsolute });

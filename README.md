@@ -65,7 +65,8 @@ npm test                  # тесты самого агента (node:test, с�
 | `llm.pricing` | необязательно: цены для сводки расхода |
 | `llm.ollama` | необязательно: `endpoint`, `num_ctx`, `num_gpu` |
 | `llm.defaultProvider` | необязательно: провайдер для моделей с неизвестным именем |
-| `workspace.targetProject` | проект по умолчанию (во время работы выбирается в меню) |
+
+Проект в конфиге не задаётся: он выбирается в меню при старте (или `AUTO_PROJECT`, или `/p` во время работы).
 
 Провайдер определяется по имени модели: `qwen/llama/gemma` → Ollama, `deepseek` → DeepSeek,
 `claude` → Claude, `gemini` → Gemini.
