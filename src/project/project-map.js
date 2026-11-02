@@ -4,14 +4,16 @@ import { config } from '../config.js';
 import { getStatePaths } from './state-paths.js';
 import { listProjectFiles } from './file-manager.js';
 
-// Карта проекта: один файл вместо сотен .meta.json рядом с исходниками.
-// Лежит в <проект>/.dev-agent/PROJECT_MAP.md и не засоряет репозиторий.
+// Project map: one file instead of hundreds of .meta.json next to the sources.
+// Lives in <project>/.dev-agent/PROJECT_MAP.md and does not clutter the repository.
 
 const MAX_ANALYZE_BYTES = 512 * 1024;
+// Above this the orchestrator must not give the file to the fast tier (its reply would be truncated)
+const GOD_FILE_LINES = 300;
 const JS_FAMILY = /\.(mjs|cjs|jsx?|tsx?)$/i;
 const INDEXABLE = /\.(mjs|cjs|jsx?|tsx?|vue|svelte|java|kt|py|go|rs|cs|php|rb|sql|ps1|sh|json|md|ya?ml|toml|html|css|scss|gradle|xml|properties)$/i;
 
-// JSDoc в карте нужен диспетчеру на английском: русские описания отбрасываем
+// JSDoc in the map is read by the orchestrator in English: Russian descriptions are dropped
 function cleanComment(raw) {
     if (!raw) return '';
     const cleaned = raw.split('\n')
@@ -87,7 +89,7 @@ export function parseMapFiles(mapText) {
     );
 }
 
-/** Собирает карту и сохраняет её в .dev-agent/PROJECT_MAP.md */
+/** Builds the map and saves it to .dev-agent/PROJECT_MAP.md */
 export function buildProjectMap(targetProject = config.workspace.targetProject) {
     const { targetAbsolute, stateDir, mapFile } = getStatePaths(targetProject);
     console.log(`🔍 Сканирую проект: ${targetAbsolute}`);
@@ -107,10 +109,11 @@ export function buildProjectMap(targetProject = config.workspace.targetProject) 
                 lines = content.split('\n').length;
                 nodes = analyzeFile(relativePath, content);
             }
-        } catch { /* нечитаемый файл остаётся в карте без индекса */ }
+        } catch { /* an unreadable file stays in the map without an index */ }
 
         markdown += `### 📄 ${relativePath}\n`;
-        if (lines) markdown += `- _${lines} lines_\n`;
+        if (lines > GOD_FILE_LINES) markdown += `- _${lines} lines_ ⚠️ [GOD FILE]\n`;
+        else if (lines) markdown += `- _${lines} lines_\n`;
         markdown += nodes.length ? `${nodes.join('\n')}\n\n` : '- (no exported symbols indexed)\n\n';
     }
 
@@ -128,7 +131,7 @@ export function readProjectMap(targetProject = config.workspace.targetProject) {
     return { text, files: parseMapFiles(text) };
 }
 
-/** Читает карту, а если её нет — строит. */
+/** Reads the map, builds it if missing. */
 export function ensureProjectMap(targetProject = config.workspace.targetProject) {
     return readProjectMap(targetProject) ?? (buildProjectMap(targetProject), readProjectMap(targetProject));
 }

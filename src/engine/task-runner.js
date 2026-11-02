@@ -1,15 +1,18 @@
 import { config } from '../config.js';
 import { getStatePaths } from '../project/state-paths.js';
 import { readFilesContent } from '../project/file-manager.js';
+import { resetUsage, getUsage, formatUsage } from '../llm/usage.js';
 import { appendToSession, getSession, compressSessionIfNeeded } from './session.js';
-import { selectFiles, extractMentions, resolveMention } from './context-builder.js';
+import { selectContext, extractMentions, resolveMention } from './context-builder.js';
 import { buildPrompt } from './prompt.js';
 import { askAgent } from './executor.js';
 import { runPatch } from './patch-pipeline.js';
 import { restartSupervisedServer } from './server-supervisor.js';
 
-const MAX_HEALING_ATTEMPTS = 3; // сколько раз агент может исправлять собственные ошибки
-const MAX_AUTO_DEPTH = 3;       // сколько раз подряд система сама подгружает файлы по просьбе агента
+const MAX_HEALING_ATTEMPTS = 3;  // how many times the agent may fix its own errors
+const MAX_AUTO_DEPTH = 3;        // how many times in a row the system auto-loads files the agent asked for
+const FAILURES_BEFORE_ESCALATION = 2;
+const ESCALATION = { fast: 'pro', pro: 'arch' }; // cheap model first, a stronger one only where it failed
 
 const banner = (title) => console.log(`\n================ AGENT RESPONSE [${title}] ================`);
 const footer = () => console.log('========================================================\n');
@@ -27,10 +30,10 @@ function restartIfRequested(parsed) {
 }
 
 /**
- * Режим «chat»: показать ответ; если агент просит файлы через @ — подгрузить и продолжить.
- * @returns {Promise<boolean>} true, если продолжение выполнено рекурсивным вызовом
+ * "chat" mode: show the reply; if the agent asks for files via @ — load them and continue.
+ * @returns {Promise<boolean>} true if the continuation ran as a recursive call
  */
-async function handleChat(parsed, { knownFiles, relevantFiles, depth }) {
+async function handleChat(parsed, { knownFiles, relevantFiles, depth, tier, tierForced }) {
     banner('CHAT');
     console.log(parsed.message);
     footer();
@@ -42,14 +45,13 @@ async function handleChat(parsed, { knownFiles, relevantFiles, depth }) {
         .filter(file => !relevantFiles.includes(file));
 
     if (newFiles.length > 0 && depth < MAX_AUTO_DEPTH) {
-        // Preserve ALL files accumulated so far, not only the new ones: the recursive
-        // processAgentTask rebuilds its file list from scratch, so previously loaded
-        // files must be re-mentioned explicitly to survive the recursion boundary.
-        const accumulatedFiles = [...new Set([...relevantFiles, ...newFiles])];
         console.log('\n⚙️ [SYSTEM] Система подтягивает файлы для агента...');
+        // Same executor as chosen for the task: otherwise a Claude task would continue on DeepSeek
         await processAgentTask(
-            `[SYSTEM] Файлы загружены: ${accumulatedFiles.map(f => `@${f}`).join(' ')}. Продолжай задачу (используй mode: "patch", если готов).`,
+            `[SYSTEM] Дополнительно загружены файлы: ${newFiles.map(f => `@${f}`).join(' ')}. Продолжай задачу (используй mode: "patch", если готов).`,
             depth + 1,
+            relevantFiles,
+            { tier, tierForced },
         );
         return true;
     }
@@ -61,8 +63,8 @@ async function handleChat(parsed, { knownFiles, relevantFiles, depth }) {
 }
 
 /**
- * Режим «patch»: один проход конвейера и решение, что делать дальше.
- * @returns {{done: boolean, extraFiles?: string[]}} done=false — нужен ещё один круг исправления
+ * "patch" mode: one pipeline pass and the decision what to do next.
+ * @returns {{done: boolean, failed?: boolean, extraFiles?: string[]}} done=false — one more fixing round is needed
  */
 async function handlePatch(parsed, attempt, ctx) {
     banner('PATCH');
@@ -95,7 +97,7 @@ async function handlePatch(parsed, attempt, ctx) {
             const reasons = result.rejected.map(r => `- ${r.path}: ${r.reason}`).join('\n');
             console.log(`⚠️ [WARN] Патч отклонён защитой. Запрашиваю исправленный вариант (Attempt ${attempt + 1}/${MAX_HEALING_ATTEMPTS})...`);
             appendToSession('user', `[SYSTEM ERROR] Your patch was rejected and NOTHING was written to disk:\n${reasons}\nReturn the COMPLETE content of every file (no placeholders like "rest of code unchanged") using project-relative paths inside the project.`);
-            return { done: false };
+            return { done: false, failed: true };
         }
 
         case 'check_failed':
@@ -108,45 +110,72 @@ async function handlePatch(parsed, attempt, ctx) {
             console.log(`⚠️ [WARN] ${result.kind}: обнаружены ошибки. Запуск модуля исправления...`);
             appendToSession('agent', `[PATCH APPLIED WITH ERRORS]: ${parsed.message}`);
             appendToSession('user', `[SYSTEM ERROR] ${result.kind} failed on the code you just wrote. Fix these errors in "patch" mode:\n\n${result.output}`);
-            return { done: false, extraFiles: result.updatedPaths };
+            return { done: false, failed: true, extraFiles: result.updatedPaths };
     }
     return { done: true };
 }
 
-/** Главный цикл задачи: контекст -> модель -> (чат | патч -> проверки -> самолечение). */
-export async function processAgentTask(text, depth = 0) {
+/** Moves the task one tier up after repeated failures on the current tier (unless the tier was forced by a tag). */
+function escalate(state) {
+    state.failuresOnTier++;
+    const next = ESCALATION[state.tier];
+    if (state.tierForced || !next || state.failuresOnTier < FAILURES_BEFORE_ESCALATION) return;
+    console.log(`⬆️ [ESCALATION] ${state.failuresOnTier} неудачи подряд на уровне ${state.tier.toUpperCase()} — передаю задачу уровню ${next.toUpperCase()}.`);
+    state.tier = next;
+    state.failuresOnTier = 0;
+}
+
+/**
+ * Main task loop: orchestrator -> executor -> (chat | patch -> checks -> self-healing with escalation).
+ * @param {string[]} [inheritedFiles] files already loaded (auto-loading continuation)
+ * @param {{tier?: string, tierForced?: boolean, forceFullAudit?: boolean}} [options]
+ */
+export async function processAgentTask(text, depth = 0, inheritedFiles = [], options = {}) {
+    if (depth === 0) resetUsage();
     console.log('🤖 [AGENT] Gathering context...');
     appendToSession('user', text);
 
     try {
         const targetProject = config.workspace.targetProject;
         const { targetAbsolute } = getStatePaths(targetProject);
-        const { projectMapText, knownFiles, relevantFiles: selected } = await selectFiles(text, targetProject);
-        let relevantFiles = selected;
+        const ctx = await selectContext(text, targetProject, { depth, inheritedFiles, ...options });
+        const state = { tier: ctx.tier, tierForced: ctx.tierForced, failuresOnTier: 0 };
+        let relevantFiles = ctx.relevantFiles;
 
         for (let attempt = 0; attempt <= MAX_HEALING_ATTEMPTS; attempt++) {
             const prompt = buildPrompt({
-                projectMapText,
+                projectMapText: ctx.projectMapText,
                 filesContext: readFilesContent(relevantFiles, targetAbsolute),
                 sessionContext: getSession(),
+                task: ctx.task,
+                subtask: ctx.subtask,
             });
 
             console.log(attempt > 0
-                ? `🤖 [AGENT] Executor is fixing errors (Attempt ${attempt}/${MAX_HEALING_ATTEMPTS})...`
-                : '🤖 [AGENT] Executor is thinking/coding...');
+                ? `🤖 [AGENT] Executor (${state.tier.toUpperCase()}) is fixing errors (Attempt ${attempt}/${MAX_HEALING_ATTEMPTS})...`
+                : `🤖 [AGENT] Executor (${state.tier.toUpperCase()}) is thinking/coding...`);
 
-            const parsed = await askAgent(prompt);
+            let parsed;
+            try {
+                parsed = await askAgent(prompt, state.tier, attempt > 0 ? `${state.tier} fix` : state.tier);
+            } catch (error) {
+                // No valid JSON even after the retry and all fallbacks: count as a failure, maybe escalate
+                if (attempt >= MAX_HEALING_ATTEMPTS) throw error;
+                console.log(`⚠️ [WARN] Исполнитель не дал корректный ответ: ${error.message}`);
+                escalate(state);
+                continue;
+            }
             printPlan(parsed.plan);
 
             if (parsed.mode === 'chat') {
-                const continued = await handleChat(parsed, { knownFiles, relevantFiles, depth });
-                if (continued) return; // продолжение выполнил рекурсивный вызов (он сам сожмёт сессию)
+                await handleChat(parsed, { knownFiles: ctx.knownFiles, relevantFiles, depth, tier: state.tier, tierForced: state.tierForced });
                 break;
             }
 
             if (parsed.mode === 'patch') {
                 const step = await handlePatch(parsed, attempt, { targetProject, targetAbsolute });
                 if (step.done) break;
+                if (step.failed) escalate(state);
                 if (step.extraFiles) relevantFiles = [...new Set([...relevantFiles, ...step.extraFiles])];
                 continue;
             }
@@ -159,5 +188,8 @@ export async function processAgentTask(text, depth = 0) {
         console.error('\n❌ [ERROR] Ошибка обработки задачи:', error.message);
     }
 
+    if (depth > 0) return; // the top-level call compresses the session and prints usage once
     await compressSessionIfNeeded();
+    const summary = formatUsage(getUsage(), config.llm.pricing);
+    if (summary) console.log(`\n${summary}`);
 }

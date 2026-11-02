@@ -1,6 +1,2 @@
-// src/llm/translate.js — thin re-export shim over the translation helpers
-// exposed by the active dynamic ai-core adapter (core/llm.js).
-export {
-    translateToEnglish,
-    translateToRussianIfEnglish,
-} from '../../core/llm.js';
+// Translation helpers (local model), re-exported from the ai-core adapter.
+export { translateToEnglish, translateToRussianIfEnglish } from './index.js';
