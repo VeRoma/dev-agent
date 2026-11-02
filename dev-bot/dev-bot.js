@@ -1,24 +1,18 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { execFile } from 'child_process';
-import fs from 'fs';
 import path from 'path';
+// Same project rules as the agent (one implementation): ../repositories, plus "self" / 0 — the agent itself
+import { listProjects, resolveProject } from '../src/project/projects.js';
+import { SELF_PROJECT, SELF_BRANCH } from '../src/project/self-workspace.js';
+import { classifyExternalTask, EXTERNAL_COMMANDS } from '../src/cli/external-task.js';
 
 const agentDir = path.join(import.meta.dirname, '..');
-// Те же правила, что в src/project/projects.js: папка ../repositories, без точечных папок и самого агента
-const projectsDir = path.join(agentDir, '..', 'repositories');
 
-// Загружаем секреты из ../.env (без новых зависимостей, Node >= 20.12)
-try {
-    process.loadEnvFile(path.join(agentDir, '.env'));
-} catch (e) {
-    console.error(`❌ Не удалось загрузить .env: ${e.message}`);
-}
-
-// Секреты читаются ТОЛЬКО из переменных окружения (в коде не хранятся)
+// Secrets: the agent's src/config.js has already loaded ../.env; they are read ONLY from the environment
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MY_CHAT_ID = Number(process.env.TELEGRAM_CHAT_ID);
 
-// Fail-fast: без валидных секретов бот не стартует
+// Fail fast: without valid secrets the bot does not start
 if (!TOKEN || !process.env.TELEGRAM_CHAT_ID || !Number.isFinite(MY_CHAT_ID)) {
     console.error('❌ Ошибка запуска: не заданы TELEGRAM_BOT_TOKEN и/или TELEGRAM_CHAT_ID. Проверьте .env в корне проекта.');
     process.exit(1);
@@ -26,89 +20,27 @@ if (!TOKEN || !process.env.TELEGRAM_CHAT_ID || !Number.isFinite(MY_CHAT_ID)) {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// Активный проект хранится ИМЕНЕМ, а не номером: если список проектов изменится,
-// задача не улетит в чужой проект. Агент дополнительно проверяет имя при запуске.
+// The active project is stored by NAME, not by number: if the list changes,
+// a task never goes to someone else's project. The agent checks the name again at startup.
 let activeProject = null;
 let taskRunning = false;
 
-function listProjects() {
-    const agentFolder = path.basename(agentDir);
-    return fs.readdirSync(projectsDir)
-        .filter((name) => {
-            if (name.startsWith('.') || name === agentFolder) return false;
-            try { return fs.statSync(path.join(projectsDir, name)).isDirectory(); } catch { return false; }
-        })
-        .sort((a, b) => a.localeCompare(b));
-}
-
-function resolveProject(selector, projects) {
-    const value = String(selector).trim();
-    if (/^\d+$/.test(value)) return projects[Number(value) - 1] ?? null;
-    return projects.includes(value) ? value : null;
-}
+const HELP =
+    `Команды: /list — проекты, /p <номер, имя или self> — выбрать проект.\n` +
+    `Агенту: текст задачи или ${EXTERNAL_COMMANDS.join(', ')}.\n` +
+    `/self-diff работает и без выбранного проекта.`;
 
 console.log('🤖 Dev-Bot запущен и слушает Telegram...');
 
-bot.on('message', (msg) => {
-    const chatId = msg.chat.id;
-
-    // СЕКЬЮРИТИ: Отшиваем всех чужаков
-    if (chatId !== MY_CHAT_ID) {
-        bot.sendMessage(chatId, '⛔ Доступ к Агенту запрещен.');
-        return;
-    }
-
-    const text = msg.text;
-    if (!text) return;
-    const lower = text.toLowerCase();
-
-    // === КОМАНДА: ПОКАЗАТЬ СПИСОК ПРОЕКТОВ ===
-    if (lower === '/list' || lower === '/projects') {
-        try {
-            const projects = listProjects();
-            const lines = projects.map((name, i) => `${name === activeProject ? '✅' : '  '} [${i + 1}] ${name}`);
-            bot.sendMessage(chatId,
-                `📂 Доступные проекты:\n\n${lines.join('\n')}\n\nТекущий проект: ${activeProject ?? 'не выбран'}\nЧтобы сменить, отправь: /p <номер или имя>`);
-        } catch (e) {
-            bot.sendMessage(chatId, `❌ Ошибка чтения папки проектов: ${e.message}`);
-        }
-        return;
-    }
-
-    // === КОМАНДА: СМЕНИТЬ ПРОЕКТ ===
-    if (lower.startsWith('/p ')) {
-        try {
-            const selected = resolveProject(text.slice(3), listProjects());
-            if (!selected) {
-                bot.sendMessage(chatId, '⚠️ Такого проекта нет. Пример: /p 3 или /p имя-проекта. Список: /list');
-            } else {
-                activeProject = selected;
-                bot.sendMessage(chatId, `🔄 Активный проект: ${selected}\nТеперь все задачи будут улетать в него!`);
-            }
-        } catch (e) {
-            bot.sendMessage(chatId, `❌ Ошибка чтения папки проектов: ${e.message}`);
-        }
-        return;
-    }
-
-    // === СТАНДАРТНОЕ ТЗ ДЛЯ АГЕНТА ===
-    if (!activeProject) {
-        bot.sendMessage(chatId, '⚠️ Сначала выберите проект: /list, затем /p <номер или имя>.');
-        return;
-    }
-    if (taskRunning) {
-        bot.sendMessage(chatId, '⏳ Предыдущая задача ещё выполняется. Дождитесь ответа.');
-        return;
-    }
-
+function runAgent(chatId, project, text) {
     taskRunning = true;
-    bot.sendMessage(chatId, `⏳ Принял задачу (проект ${activeProject}). Запускаю Агента...`);
+    bot.sendMessage(chatId, `⏳ Принял (проект ${project}). Запускаю Агента...`);
 
-    // Без shell и без PowerShell: проект и задача передаются через окружение только этого процесса
-    // (не через общий файл, который подхватил бы и ручной запуск агента). Работает на любой ОС.
+    // No shell: the project and the task go through this process's environment only
+    // (not a shared file a manual agent start could pick up). Works on any OS.
     execFile(process.execPath, ['agent.js'], {
         cwd: agentDir,
-        env: { ...process.env, AUTO_PROJECT: activeProject, DEV_TASK: text },
+        env: { ...process.env, AUTO_PROJECT: project, DEV_TASK: text },
         timeout: 10 * 60 * 1000,
         maxBuffer: 10 * 1024 * 1024,
     }, (error, stdout, stderr) => {
@@ -123,4 +55,75 @@ bot.on('message', (msg) => {
 
         bot.sendMessage(chatId, response || 'Агент отработал тихо.');
     });
+}
+
+bot.on('message', (msg) => {
+    const chatId = msg.chat.id;
+
+    // SECURITY: strangers are turned away
+    if (chatId !== MY_CHAT_ID) {
+        bot.sendMessage(chatId, '⛔ Доступ к Агенту запрещен.');
+        return;
+    }
+
+    const text = msg.text?.trim();
+    if (!text) return;
+    const lower = text.toLowerCase();
+
+    if (lower === '/help' || lower === '/start') {
+        bot.sendMessage(chatId, HELP);
+        return;
+    }
+
+    if (lower === '/list' || lower === '/projects') {
+        try {
+            const mark = (name) => (name === activeProject ? '✅' : '  ');
+            const lines = [
+                `${mark(SELF_PROJECT)} [0] self — сам dev-agent (worktree, ветка ${SELF_BRANCH})`,
+                ...listProjects().map((name, i) => `${mark(name)} [${i + 1}] ${name}`),
+            ];
+            bot.sendMessage(chatId,
+                `📂 Доступные проекты:\n\n${lines.join('\n')}\n\nТекущий проект: ${activeProject ?? 'не выбран'}\nЧтобы сменить, отправь: /p <номер или имя>`);
+        } catch (e) {
+            bot.sendMessage(chatId, `❌ Ошибка чтения папки проектов: ${e.message}`);
+        }
+        return;
+    }
+
+    if (lower === '/p' || lower.startsWith('/p ')) {
+        try {
+            const selected = resolveProject(text.slice(2));
+            if (!selected) {
+                bot.sendMessage(chatId, '⚠️ Такого проекта нет. Пример: /p 3, /p имя-проекта, /p self. Список: /list');
+            } else {
+                activeProject = selected;
+                const note = selected === SELF_PROJECT
+                    ? `\nРежим самоулучшения: правки идут в worktree (ветка ${SELF_BRANCH}), рабочая копия агента не меняется. Проверить правки: /self-diff`
+                    : '';
+                bot.sendMessage(chatId, `🔄 Активный проект: ${selected}\nТеперь все задачи будут улетать в него!${note}`);
+            }
+        } catch (e) {
+            bot.sendMessage(chatId, `❌ Ошибка чтения папки проектов: ${e.message}`);
+        }
+        return;
+    }
+
+    const kind = classifyExternalTask(text);
+    if (kind === 'refused') {
+        bot.sendMessage(chatId, `⚠️ Эта команда недоступна из Telegram.\n${HELP}`);
+        return;
+    }
+
+    // /self-diff looks at the self worktree whatever project is active
+    const project = lower.startsWith('/self-diff') ? (activeProject ?? SELF_PROJECT) : activeProject;
+    if (!project) {
+        bot.sendMessage(chatId, '⚠️ Сначала выберите проект: /list, затем /p <номер или имя>.');
+        return;
+    }
+    if (taskRunning) {
+        bot.sendMessage(chatId, '⏳ Предыдущая задача ещё выполняется. Дождитесь ответа.');
+        return;
+    }
+
+    runAgent(chatId, project, text);
 });

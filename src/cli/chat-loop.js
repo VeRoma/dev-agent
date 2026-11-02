@@ -6,6 +6,7 @@ import { setConfirmHandler, setExclusiveRunner } from '../engine/io.js';
 import { askConfirm, onInputLine, showPrompt, closeTerminal } from './terminal.js';
 import { handleCommand } from './commands.js';
 import { readPromptViaEditor } from './editor-input.js';
+import { classifyExternalTask, EXTERNAL_COMMANDS } from './external-task.js';
 
 let busy = false; // агент выполняет задачу (из чата или авто-исправление после падения)
 
@@ -61,7 +62,7 @@ function chatLoop() {
     });
 }
 
-/** Точка входа интерфейса: разовая задача (Telegram) или интерактивный чат. */
+/** Interface entry point: a one-off task (Telegram) or the interactive chat. */
 export async function startCLI(initialTask = null) {
     const { tiers = {} } = config.llm;
     console.log('\n⚙️ [SYSTEM] Dev-Agent CLI initialized!');
@@ -74,7 +75,10 @@ export async function startCLI(initialTask = null) {
 
     if (initialTask) {
         console.log('⚙️ [SYSTEM] Обрабатываю внешнюю задачу...\n');
-        await processAgentTask(initialTask);
+        const kind = classifyExternalTask(initialTask);
+        if (kind === 'command') await handleCommand(initialTask.trim());
+        else if (kind === 'task') await processAgentTask(initialTask);
+        else console.log(`⛔ Команда недоступна без терминала. Можно: ${EXTERNAL_COMMANDS.join(', ')} или текст задачи.`);
         process.exit(0);
     }
     await chatLoop();
