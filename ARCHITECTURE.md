@@ -1,10 +1,11 @@
 # dev-agent architecture
 
 ```
-agent.js                 entry: model check, project choice (menu or AUTO_PROJECT), lock, chat or DEV_TASK
+agent.js                 entry: model check, project choice (menu or AUTO_PROJECT, 0/self = the agent itself), chat or DEV_TASK
 src/config.js            config + .env (one instance per process)
 src/cli/                 interface: terminal (single 'line' handler), chat-loop, commands (/audit, /save, /abort ...),
-                         editor-input, model-report (model availability at startup)
+                         editor-input, model-report (model availability at startup),
+                         project-setup (open/switch project: self worktree, lock, map)
 src/engine/              the "brain"
   task-runner.js           task loop: context -> executor -> chat | patch -> checks -> self-healing with tier escalation
   context-builder.js       @mentions, model tags, orchestrator call, files filtered against the project map
@@ -20,6 +21,7 @@ src/project/             everything about project files
   file-manager.js          file list (.agentignore) and reading the context
   project-map.js           PROJECT_MAP.md (JS/TS exports, Java/Python classes, line counts, ⚠️ [GOD FILE])
   patcher.js, backups.js, rollback.js   writing patches, v2 backups, /abort and /redo
+  self-workspace.js        self mode: git worktree of the agent repo (branch self-improve), never the running copy
   history.js, projects.js, editor.js
 dev-bot/                 Telegram bot (own package.json, ESM)
 tests/                   node --test

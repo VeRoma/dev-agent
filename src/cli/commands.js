@@ -5,6 +5,26 @@ import { startSupervisedServer, stopDevServer } from '../engine/server-superviso
 import { generateDocumentation } from '../project/history.js';
 import { buildProjectMap } from '../project/project-map.js';
 import { abortSessionPatches, applyRedoPatches, clearSessionBackups } from '../project/rollback.js';
+import { resolveProject } from '../project/projects.js';
+import { SELF_PROJECT } from '../project/self-workspace.js';
+import { openProject } from './project-setup.js';
+
+/** Switches the target project in a running session; on failure the current project stays. */
+function switchProject(selector) {
+    const name = resolveProject(selector);
+    if (!name) {
+        console.log('\n⚠️ Такого проекта нет. Пример: /p 3, /p имя-проекта, /p self');
+        return;
+    }
+    stopDevServer();
+    try {
+        openProject(name);
+    } catch (error) {
+        console.log(`\n❌ [ERROR] ${error.message}`);
+        return;
+    }
+    initSession(`Project: ${name}`);
+}
 
 const DEFAULT_AUDIT_TASK =
     'Проведи полный архитектурный и security-аудит проекта. Найди мёртвые файлы, сломанные импорты, ' +
@@ -18,6 +38,9 @@ const COMMANDS = {
         buildProjectMap();
         await processAgentTask(args || DEFAULT_AUDIT_TASK, 0, [], { forceFullAudit: true });
     },
+
+    '/p': async (args) => switchProject(args),
+    '/self': async () => switchProject(SELF_PROJECT),
 
     '/run': async () => startSupervisedServer(config.workspace.targetProject, processAgentTask),
     '/stop': async () => stopDevServer(),

@@ -24,7 +24,9 @@ test('projects: stable sorted list, hidden dirs and files skipped; select by num
     assert.deepEqual(projects, ['alpha', 'beta', 'zeta']);
     assert.equal(resolveProject('2', projects), 'beta');
     assert.equal(resolveProject('zeta', projects), 'zeta');
-    for (const bad of ['0', '4', 'nope', '', null]) assert.equal(resolveProject(bad, projects), null, String(bad));
+    for (const bad of ['4', 'nope', '', null]) assert.equal(resolveProject(bad, projects), null, String(bad));
+    // 0 / "self" — the agent itself (self-improvement worktree)
+    for (const self of ['0', 'self', 'SELF']) assert.equal(resolveProject(self, projects), 'self', self);
 });
 
 test('state-paths: everything derives from one state dir inside the project', () => {
