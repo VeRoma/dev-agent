@@ -1,8 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getStatePaths } from './state-paths.js';
-import { resolveProjectFile } from '../safety/safe-path.js';
-import { validateFileUpdate } from '../safety/patch-guard.js';
+import { resolveProjectFile, validateFileUpdate } from '@veroma/ai-core/safety';
 import { newBackupPath, readCreated, writeCreated, hasBackup } from './backups.js';
 import { openInEditor } from './editor.js';
 import { buildProjectMap } from './project-map.js';

@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { classifyCommand } from '../safety/command-guard.js';
+import { classifyCommand } from '@veroma/ai-core/safety';
 import { confirm } from './io.js';
 import { appendToSession } from './session.js';
 

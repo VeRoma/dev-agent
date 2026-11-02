@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { config } from '../config.js';
 import { getStatePaths } from './state-paths.js';
-import { resolveInside } from '../safety/safe-path.js';
+import { resolveInside } from '@veroma/ai-core/safety';
 import {
     BACKUP_NAME_RE, encodeBackupName, decodeBackupName,
     readCreated, writeCreated, moveBackupsTo,

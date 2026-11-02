@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import ignore from 'ignore';
 import { AGENT_ROOT } from '../config.js';
-import { resolveInside, isSecretPath } from '../safety/safe-path.js';
+import { resolveInside, isSecretPath } from '@veroma/ai-core/safety';
 
 // Игнорируется всегда, даже если забыли указать в .agentignore
 const ALWAYS_IGNORED = ['.git', 'node_modules', '.dev-agent', '.meta-agent', '.agent_backup'];

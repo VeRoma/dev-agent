@@ -1,6 +1,6 @@
 import { askModel } from '../llm/index.js';
 import { translateToRussianIfEnglish } from '../llm/translate.js';
-import { parseModelJson } from '../safety/json-utils.js';
+import { parseModelJsonObject as parseModelJson } from '@veroma/ai-core/json';
 
 /** Запрашивает у исполнителя JSON; при невалидном ответе делает ОДНУ повторную попытку. */
 export async function askForJson(prompt) {
