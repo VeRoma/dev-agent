@@ -1,0 +1,14 @@
+node_modules
+.env
+.env.*
+!.env.example
+logs
+*.log
+dist
+build
+
+# Служебные файлы агентов (память, бэкапы, задачи из Telegram)
+.dev-agent/
+.meta-agent/
+agent_task.txt
+.agent_backup/

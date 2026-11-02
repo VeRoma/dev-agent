@@ -1,0 +1,28 @@
+{
+  "name": "dev-agent",
+  "version": "1.1.0",
+  "description": "Autonomous coding agent: routes files via a project map, applies guarded patches, self-heals on lint/test errors",
+  "main": "agent.js",
+  "type": "module",
+  "scripts": {
+    "start": "node agent.js",
+    "agent": "node agent.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@google/generative-ai": "^0.24.1",
+    "@veroma/ai-core": "file:../ai-core",
+    "dotenv": "^18.0.9",
+    "ignore": "^7.0.5"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}
