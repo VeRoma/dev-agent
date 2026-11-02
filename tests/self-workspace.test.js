@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { resolveProjectFile } from '@veroma/ai-core/safety';
-import { ensureSelfWorkspace, selfWorktreePath, assertNotAgentRoot, isSelfWorktree, SELF_BRANCH } from '../src/project/self-workspace.js';
+import { ensureSelfWorkspace, selfWorktreePath, assertNotAgentRoot, isSelfWorktree, selfDiff, SELF_BRANCH } from '../src/project/self-workspace.js';
 import { startSupervisedServer } from '../src/engine/server-supervisor.js';
 
 // core.autocrlf may turn LF into CRLF on checkout: compare content, not line endings
@@ -87,4 +87,33 @@ test('self: the worktree is never started as a dev server (it would run a copy o
     let ran = false;
     startSupervisedServer(selfWorktreePath(), async () => { ran = true; });
     assert.equal(ran, false);
+});
+
+test('self-diff: commits, uncommitted edits and new files of the agent; later commits on the running branch are not its changes', () => {
+    const root = makeAgentRepo();
+    assert.equal(selfDiff(root), null, 'no worktree yet');
+
+    const ws = ensureSelfWorkspace(root);
+    assert.equal(selfDiff(root).hasChanges, false);
+
+    // the agent: one commit, one uncommitted edit, one new file
+    fs.writeFileSync(path.join(ws.path, 'feature.js'), 'export const f = 1;\n');
+    git(ws.path, 'add', '-A');
+    git(ws.path, 'commit', '-q', '-m', 'add feature');
+    fs.writeFileSync(path.join(ws.path, 'agent.js'), 'export const v = 1; // improved\n');
+    fs.writeFileSync(path.join(ws.path, 'draft.js'), 'export const d = 1;\n');
+    // meanwhile the developer commits to the running branch
+    fs.writeFileSync(path.join(root, 'other.js'), 'export const o = 1;\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'developer work');
+
+    const report = selfDiff(root);
+    assert.equal(report.hasChanges, true);
+    assert.deepEqual(report.commits.map(c => c.split(' ').slice(1).join(' ')), ['add feature']);
+    assert.equal(report.behind, 1);
+    assert.match(report.stat, /feature\.js/);
+    assert.match(report.stat, /agent\.js/, 'uncommitted edits are included');
+    assert.deepEqual(report.untracked, ['draft.js']);
+    assert.ok(!report.stat.includes('other.js') && !report.diff.includes('other.js'), 'the developer\'s commit is not the agent\'s change');
+    assert.match(report.diff, /\+export const v = 1; \/\/ improved/);
 });

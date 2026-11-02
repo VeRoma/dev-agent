@@ -12,7 +12,7 @@ export const SELF_BRANCH = 'self-improve';
 
 function git(args, cwd) {
     // No shell: arguments are passed as an array
-    return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 50 * 1024 * 1024 }).trim();
 }
 
 /** <agent>/../<agent folder>-self */
@@ -80,4 +80,38 @@ export function ensureSelfWorkspace(agentRoot = AGENT_ROOT) {
     }
 
     return { path: worktree, branch: SELF_BRANCH, created, updated, ahead };
+}
+
+/**
+ * What the agent changed in the self worktree compared with the running version.
+ * Everything is measured from the merge base, so commits that landed on the running branch
+ * after the worktree was created never show up as the agent's changes.
+ * Uncommitted edits count too: the agent writes files, it does not have to commit them.
+ * @returns {null | {path: string, mainBranch: string, commits: string[], ahead: number, behind: number,
+ *   stat: string, untracked: string[], diff: string, hasChanges: boolean}} null if there is no worktree yet
+ */
+export function selfDiff(agentRoot = AGENT_ROOT) {
+    const worktree = selfWorktreePath(agentRoot);
+    if (!fs.existsSync(worktree)) return null;
+
+    const mainBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], agentRoot);
+    const base = git(['merge-base', mainBranch, SELF_BRANCH], worktree);
+    const commits = git(['log', '--format=%h %s', `${mainBranch}..${SELF_BRANCH}`], worktree).split('\n').filter(Boolean);
+    const behind = Number(git(['rev-list', '--count', `${SELF_BRANCH}..${mainBranch}`], worktree));
+    // Working tree vs merge base: committed and uncommitted changes of tracked files
+    const stat = git(['diff', '--stat', base], worktree);
+    const diff = git(['diff', base], worktree);
+    const untracked = git(['ls-files', '--others', '--exclude-standard'], worktree).split('\n').filter(Boolean);
+
+    return {
+        path: worktree,
+        mainBranch,
+        commits,
+        ahead: commits.length,
+        behind,
+        stat,
+        untracked,
+        diff,
+        hasChanges: Boolean(stat) || untracked.length > 0,
+    };
 }

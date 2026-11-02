@@ -6,7 +6,8 @@ import { generateDocumentation } from '../project/history.js';
 import { buildProjectMap } from '../project/project-map.js';
 import { abortSessionPatches, applyRedoPatches, clearSessionBackups } from '../project/rollback.js';
 import { resolveProject } from '../project/projects.js';
-import { SELF_PROJECT } from '../project/self-workspace.js';
+import { SELF_PROJECT, SELF_BRANCH, selfDiff } from '../project/self-workspace.js';
+import { runTests } from '../engine/tester.js';
 import { openProject } from './project-setup.js';
 
 /** Switches the target project in a running session; on failure the current project stays. */
@@ -26,6 +27,53 @@ function switchProject(selector) {
     initSession(`Project: ${name}`);
 }
 
+/**
+ * /self-diff [full]: what the agent changed in the self worktree and whether its tests pass.
+ * Only reports: merging into the running copy is always the developer's manual step.
+ */
+async function showSelfDiff(args) {
+    const report = selfDiff();
+    if (!report) {
+        console.log('\n🪞 Worktree самоулучшения ещё не создан. Откройте проект self: /self');
+        return;
+    }
+
+    console.log(`\n🪞 [SELF-DIFF] ${report.path} (ветка ${SELF_BRANCH}) против рабочей версии (${report.mainBranch})`);
+    if (report.behind > 0) {
+        console.log(`   ℹ️ Рабочая версия ушла вперёд на ${report.behind} коммит(ов) — они ниже не показаны.`);
+    }
+    if (!report.hasChanges) {
+        console.log('   Изменений нет.');
+        return;
+    }
+
+    if (report.commits.length > 0) {
+        console.log(`\n   Коммиты (${report.commits.length}):`);
+        report.commits.forEach(c => console.log(`     ${c}`));
+    }
+    if (report.stat) console.log(`\n   Изменённые файлы (включая незакоммиченные правки):\n${report.stat.replace(/^/gm, '     ')}`);
+    if (report.untracked.length > 0) {
+        console.log(`\n   Новые файлы (ещё не в git):`);
+        report.untracked.forEach(f => console.log(`     + ${f}`));
+    }
+    if (args.trim().toLowerCase() === 'full' && report.diff) console.log(`\n${report.diff}`);
+    else if (report.diff) console.log('\n   Полный diff: /self-diff full');
+
+    console.log('\n🧪 Тесты worktree...');
+    const tests = await runTests(report.path);
+    (tests.warnings || []).forEach(w => console.log(`   ⚠️ ${w}`));
+    const summary = tests.output.split('\n').filter(l => /^ℹ (tests|pass|fail)\b/.test(l)).join(' | ');
+    console.log(tests.ok ? `   ✅ Тесты прошли. ${summary}` : `   ❌ Тесты упали. ${summary}\n${tests.output}`);
+
+    const wt = report.path;
+    console.log(`
+📦 Выпуск новой версии — только вручную:
+   1. Зафиксировать правки агента:  git -C "${wt}" add -A && git -C "${wt}" commit -m "<описание>"
+   2. Влить в рабочую версию:       git merge ${SELF_BRANCH}     (в папке агента)
+   3. По желанию — тег и отправка:  git tag vX.Y.Z && git push && git push --tags
+   Отказаться от правок:            git -C "${wt}" reset --hard ${report.mainBranch} && git -C "${wt}" clean -fd`);
+}
+
 const DEFAULT_AUDIT_TASK =
     'Проведи полный архитектурный и security-аудит проекта. Найди мёртвые файлы, сломанные импорты, ' +
     'несовместимость модулей, дыры в безопасности (секреты в коде, инъекции, небезопасные команды) и рассинхрон логики. ' +
@@ -41,6 +89,7 @@ const COMMANDS = {
 
     '/p': async (args) => switchProject(args),
     '/self': async () => switchProject(SELF_PROJECT),
+    '/self-diff': async (args) => showSelfDiff(args),
 
     '/run': async () => startSupervisedServer(config.workspace.targetProject, processAgentTask),
     '/stop': async () => stopDevServer(),

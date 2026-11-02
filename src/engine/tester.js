@@ -12,7 +12,7 @@ function hasRealTestScript(cwd) {
     }
 }
 
-/** Запускает `npm test` целевого проекта. Нет скрипта test — это не ошибка кода. */
+/** Runs `npm test` of the target project. No test script is not a code error. */
 export function runTests(targetProject) {
     const { targetAbsolute } = getStatePaths(targetProject);
 
@@ -23,7 +23,7 @@ export function runTests(targetProject) {
     return new Promise((resolve) => {
         exec('npm test', { cwd: targetAbsolute, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
             if (error) {
-                // Хвост вывода — самое важное, лишнее режем
+                // The tail of the output matters most; cut the rest
                 return resolve({ ok: false, output: (stdout + '\n' + stderr).slice(-4000) });
             }
             resolve({ ok: true, output: stdout });
