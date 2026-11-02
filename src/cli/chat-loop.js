@@ -2,48 +2,74 @@ import { config } from '../config.js';
 import { initSession } from '../engine/session.js';
 import { processAgentTask } from '../engine/task-runner.js';
 import { stopDevServer } from '../engine/server-supervisor.js';
-import { setConfirmHandler } from '../engine/io.js';
-import { ask, askConfirm, closeTerminal } from './terminal.js';
+import { setConfirmHandler, setExclusiveRunner } from '../engine/io.js';
+import { askConfirm, onInputLine, showPrompt, closeTerminal } from './terminal.js';
 import { handleCommand } from './commands.js';
 import { readPromptViaEditor } from './editor-input.js';
 
-async function chatLoop() {
-    while (true) {
-        const answer = await ask('\n>> ');
-        if (answer === null) break; // ввод закрыт
+let busy = false; // агент выполняет задачу (из чата или авто-исправление после падения)
 
-        let text = answer.trim();
-
-        if (['exit', 'quit'].includes(text.toLowerCase())) {
-            console.log('⚙️ [SYSTEM] Агент отключается. До связи!');
-            stopDevServer();
-            break;
-        }
-
-        if (text === '/editor') {
-            text = readPromptViaEditor();
-            if (!text) continue;
-        }
-        if (!text) continue;
-
-        try {
-            if (text.startsWith('/')) await handleCommand(text);
-            else await processAgentTask(text);
-        } catch (error) {
-            // Ошибка одной команды не должна убивать весь цикл
-            console.error('\n❌ [ERROR] Неожиданная ошибка:', error.message);
-        }
+/** Задача агента: никогда не две одновременно; после неё снова приглашение. */
+async function runExclusive(task) {
+    if (busy) return false;
+    busy = true;
+    try {
+        await task();
+    } catch (error) {
+        // Ошибка одной задачи не должна убивать весь цикл
+        console.error('\n❌ [ERROR] Неожиданная ошибка:', error.message);
+    } finally {
+        busy = false;
+        showPrompt();
     }
-    closeTerminal();
+    return true;
+}
+
+async function handleInput(text) {
+    if (text === '/editor') {
+        const editorText = readPromptViaEditor();
+        if (editorText) await processAgentTask(editorText);
+    } else if (text.startsWith('/')) {
+        await handleCommand(text);
+    } else {
+        await processAgentTask(text);
+    }
+}
+
+function chatLoop() {
+    return new Promise((resolve) => {
+        onInputLine((line) => {
+            const text = line.trim();
+
+            if (['exit', 'quit'].includes(text.toLowerCase())) {
+                console.log('⚙️ [SYSTEM] Агент отключается. До связи!');
+                stopDevServer();
+                closeTerminal();
+                return;
+            }
+            if (busy) {
+                if (text) console.log('⏳ Агент занят текущей задачей. Дождитесь завершения (или exit для выхода).');
+                return;
+            }
+            if (!text) {
+                showPrompt();
+                return;
+            }
+            runExclusive(() => handleInput(text));
+        }, resolve); // ввод закрыт (exit, Ctrl+D, конец потока)
+        showPrompt();
+    });
 }
 
 /** Точка входа интерфейса: разовая задача (Telegram) или интерактивный чат. */
 export async function startCLI(initialTask = null) {
+    const { tiers = {} } = config.llm;
     console.log('\n⚙️ [SYSTEM] Dev-Agent CLI initialized!');
-    console.log(`⚙️ [SYSTEM] Executor: ${config.llm.executorModel}`);
+    console.log(`⚙️ [SYSTEM] Executors: fast=${tiers.fast}, pro=${tiers.pro}, arch=${tiers.arch}`);
     console.log(`⚙️ [SYSTEM] Target Project: ${config.workspace.targetProject}`);
 
     setConfirmHandler(askConfirm);
+    setExclusiveRunner(runExclusive);
     initSession('Dev-Agent Operation (General)');
 
     if (initialTask) {

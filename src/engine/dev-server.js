@@ -3,9 +3,32 @@ import path from 'path';
 import fs from 'fs';
 import { getStatePaths } from '../project/state-paths.js';
 
+const OUTPUT_TAIL = 8000;  // сколько последнего вывода держать для модели
 let currentProcess = null;
-let lastErrorAt = 0; // антиспам: не дёргаем авто-исправление чаще, чем раз в 5 секунд
+let lastErrorAt = 0;       // антиспам: не дёргаем авто-исправление чаще, чем раз в 5 секунд
 let logTailInterval = null;
+
+// Падение, а не просто слово «error» в логе: строка обработанной ошибки, «0 failed»
+// или логгер с errorHandler не должны запускать правку кода.
+const NODE_CRASH_RE = /\[nodemon\] app crashed/i;
+const JAVA_STARTUP_FAILURE_RE = /APPLICATION FAILED TO START|BUILD FAILURE|Error starting ApplicationContext|Exception in thread "main"/;
+
+/** nodemon и подобные не завершаются при падении приложения, а ждут изменений — это тоже падение. */
+export function isNodeCrashOutput(text) {
+    return NODE_CRASH_RE.test(text);
+}
+
+/** Spring Boot / Maven: только признаки того, что приложение не поднялось. */
+export function isJavaStartupFailure(text) {
+    return JAVA_STARTUP_FAILURE_RE.test(text);
+}
+
+function reportCrash(onErrorCallback, log) {
+    const now = Date.now();
+    if (now - lastErrorAt <= 5000) return;
+    lastErrorAt = now;
+    onErrorCallback(log.slice(-OUTPUT_TAIL));
+}
 
 // Где запускать: backend/start.ps1 (Java), start.ps1, package.json в корне либо в первой подпапке
 function locateRunTarget(rootPath) {
@@ -31,12 +54,6 @@ function pickNpmScript(runPath) {
     }
 }
 
-const looksLikeError = (text) => {
-    const lower = text.toLowerCase();
-    return (lower.includes('error') && !lower.includes('0 errors'))
-        || lower.includes('failed') || lower.includes('exception') || lower.includes('build failure');
-};
-
 export function runDevServer(targetProject, onErrorCallback) {
     if (currentProcess) {
         console.log('\n⚠️ Процесс уже запущен. Введите /stop для остановки.');
@@ -47,16 +64,12 @@ export function runDevServer(targetProject, onErrorCallback) {
     const { runPath, isJava } = locateRunTarget(targetAbsolute);
     console.log(`\n🚀 Запускаю процесс в: ${runPath}`);
 
-    const processOutput = (data) => {
+    let log = '';
+    const collect = (data) => {
         const output = data.toString();
         process.stdout.write(`[TARGET] ${output}`);
-        if (looksLikeError(output)) {
-            const now = Date.now();
-            if (now - lastErrorAt > 5000) {
-                lastErrorAt = now;
-                onErrorCallback(output);
-            }
-        }
+        log = (log + output).slice(-OUTPUT_TAIL);
+        return output;
     };
 
     if (isJava) {
@@ -78,7 +91,9 @@ export function runDevServer(targetProject, onErrorCallback) {
                 if (!fs.existsSync(latestLog)) return;
                 const size = fs.statSync(latestLog).size;
                 if (size > lastSize) {
-                    fs.createReadStream(latestLog, { start: lastSize, end: size }).on('data', processOutput);
+                    fs.createReadStream(latestLog, { start: lastSize, end: size }).on('data', (chunk) => {
+                        if (isJavaStartupFailure(collect(chunk))) reportCrash(onErrorCallback, log);
+                    });
                     lastSize = size;
                 }
             }, 1000);
@@ -92,10 +107,21 @@ export function runDevServer(targetProject, onErrorCallback) {
 
     const child = spawn('npm', ['run', script], { cwd: runPath, shell: true });
     currentProcess = child;
-    child.stdout.on('data', processOutput);
-    child.stderr.on('data', processOutput);
-    // Обнуляем только если это всё ещё ТЕКУЩИЙ процесс (после рестарта старый закрывается позже нового)
-    child.on('close', () => { if (currentProcess === child) currentProcess = null; });
+    const onOutput = (data) => {
+        if (isNodeCrashOutput(collect(data))) reportCrash(onErrorCallback, log);
+    };
+    child.stdout.on('data', onOutput);
+    child.stderr.on('data', onOutput);
+    child.on('close', (code) => {
+        // Обнуляем только если это всё ещё ТЕКУЩИЙ процесс (после рестарта старый закрывается позже нового)
+        if (currentProcess === child) currentProcess = null;
+        // Остановка через /stop или рестарт — не падение (taskkill тоже даёт ненулевой код)
+        if (child.stoppedByAgent) return;
+        if (code !== 0 && code !== null) {
+            console.log(`\n💥 Целевой процесс завершился с кодом ${code}.`);
+            reportCrash(onErrorCallback, log);
+        }
+    });
 }
 
 export function stopDevServer() {
@@ -108,10 +134,13 @@ export function stopDevServer() {
     if (currentProcess.isJava) {
         try { execSync('powershell -ExecutionPolicy Bypass -File .\\stop.ps1', { cwd: currentProcess.runPath, stdio: 'ignore' }); } catch { /* уже остановлен */ }
         if (logTailInterval) { clearInterval(logTailInterval); logTailInterval = null; }
-    } else if (process.platform === 'win32') {
-        spawn('taskkill', ['/pid', currentProcess.pid, '/f', '/t']);
     } else {
-        currentProcess.kill();
+        currentProcess.stoppedByAgent = true;
+        if (process.platform === 'win32') {
+            spawn('taskkill', ['/pid', currentProcess.pid, '/f', '/t']);
+        } else {
+            currentProcess.kill();
+        }
     }
     currentProcess = null;
 }

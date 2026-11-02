@@ -6,10 +6,8 @@ import { generateDocumentation } from '../project/history.js';
 import { buildProjectMap } from '../project/project-map.js';
 import { abortSessionPatches, applyRedoPatches, clearSessionBackups } from '../project/rollback.js';
 
-const idlePrompt = () => process.stdout.write('\n>> ');
-
 const COMMANDS = {
-    '/run': async () => startSupervisedServer(config.workspace.targetProject, processAgentTask, idlePrompt),
+    '/run': async () => startSupervisedServer(config.workspace.targetProject, processAgentTask),
     '/stop': async () => stopDevServer(),
 
     '/save': async () => {
