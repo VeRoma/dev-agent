@@ -16,7 +16,6 @@
 - (Internal logic / No exported functions)
 
 ### 📄 core/llm.js (50 lines)
-- *External Core Imports*: `../ai-core/index.js`
 - *Imported by*: `src/llm/index.js`, `src/llm/translate.js`
 - **ai** (const)
 

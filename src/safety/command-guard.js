@@ -1,7 +1,8 @@
 // Decides whether a shell command proposed by the LLM may run automatically.
 
-// Any of these makes a command "not trivially safe" (chaining, redirects, substitution)
-const SHELL_META = /[;&|<>`\n\r]|\$\(/;
+// Any of these makes a command "not trivially safe" (chaining, redirects, substitution).
+// % — cmd.exe expands %VAR%: git commit -m "%GEMINI_API_KEY%" would write the key into git history.
+const SHELL_META = /[;&|<>`%\n\r]|\$\(/;
 
 const SAFE_PATTERNS = [
     /^npm (?:install|i|ci)$/,                       // bare install only: no new packages
