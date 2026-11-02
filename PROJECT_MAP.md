@@ -65,11 +65,11 @@
 - *Imported by*: `src/engine/patch-pipeline.js`
 - **runProjectChecks** (async function)
 
-### 📄 src/engine/command-runner.js (49 lines)
-- *Imports*: `src/safety/command-guard.js`, `src/engine/io.js`, `src/engine/session.js`
+### 📄 src/engine/command-runner.js (64 lines)
+- *Imports*: `src/engine/io.js`, `src/engine/session.js`
 - *Imported by*: `src/engine/patch-pipeline.js`, `tests/engine.test.js`
 - **normalizeCommand** (function): Normalizes a shell command: trims and collapses internal whitespace. - Kept as a pure function so tests can assert on it directly.
-- **runCommands** (async function): Runs a batch of commands in the target directory. - - safe commands run automatically - - risky commands require explicit confirmation - - a failing command stops the batch
+- **runCommands** (async function): Default runner: the command's output goes straight to the developer's terminal. */ - function runInShell(command, { cwd }) { - execSync(command, { cwd, stdio: 'inherit' }); - } - /** - Runs a batch of commands in the target directory. - - safe commands run automatically - - risky commands require explicit confirmation - - a failing command stops the batch - Every outcome is written to the session, so the model sees what happened.
 
 ### 📄 src/engine/context-builder.js (54 lines)
 - *Imports*: `src/project/project-map.js`, `src/engine/routing.js`
@@ -85,7 +85,7 @@
 - **stopDevServer** (function)
 
 ### 📄 src/engine/executor.js (23 lines)
-- *Imports*: `src/llm/index.js`, `src/llm/translate.js`, `src/safety/json-utils.js`
+- *Imports*: `src/llm/index.js`, `src/llm/translate.js`
 - *Imported by*: `src/engine/task-runner.js`
 - **askForJson** (async function)
 - **askAgent** (async function)
@@ -178,7 +178,7 @@
 - **openInEditor** (function)
 
 ### 📄 src/project/file-manager.js (88 lines)
-- *Imports*: `src/config.js`, `src/safety/safe-path.js`
+- *Imports*: `src/config.js`
 - *Imported by*: `src/engine/task-runner.js`, `src/project/project-map.js`, `tests/patcher.test.js`, `tests/project.test.js`
 - **listProjectFiles** (function)
 - **readFilesContent** (function)
@@ -188,8 +188,8 @@
 - *Imported by*: `src/cli/commands.js`
 - **generateDocumentation** (async function)
 
-### 📄 src/project/patcher.js (100 lines)
-- *Imports*: `src/project/state-paths.js`, `src/safety/safe-path.js`, `src/safety/patch-guard.js`, `src/project/backups.js`, `src/project/editor.js`, `src/project/project-map.js`
+### 📄 src/project/patcher.js (99 lines)
+- *Imports*: `src/project/state-paths.js`, `src/project/backups.js`, `src/project/editor.js`, `src/project/project-map.js`
 - *Imported by*: `src/engine/patch-pipeline.js`, `tests/patcher.test.js`
 - **applyPatches** (async function)
 
@@ -211,7 +211,7 @@
 - **projectPath** (function)
 
 ### 📄 src/project/rollback.js (132 lines)
-- *Imports*: `src/config.js`, `src/project/state-paths.js`, `src/safety/safe-path.js`, `src/project/backups.js`, `src/project/editor.js`
+- *Imports*: `src/config.js`, `src/project/state-paths.js`, `src/project/backups.js`, `src/project/editor.js`
 - *Imported by*: `src/cli/commands.js`, `tests/patcher.test.js`
 - **abortSessionPatches** (async function)
 - **applyRedoPatches** (async function)
@@ -223,29 +223,7 @@
 - **STATE_DIR_NAME** (const)
 - **getStatePaths** (function)
 
-### 📄 src/safety/command-guard.js (43 lines)
-- *Imported by*: `src/engine/command-runner.js`, `tests/safety.test.js`
-- **classifyCommand** (function)
-
-### 📄 src/safety/json-utils.js (43 lines)
-- *Imported by*: `src/engine/executor.js`, `tests/safety.test.js`
-- **parseModelJson** (function): Extracts a JSON object from a model reply. - Only strips a markdown fence that wraps the WHOLE reply, so ``` inside - string values (e.g. a README written by the model) is left intact.
-
-### 📄 src/safety/patch-guard.js (86 lines)
-- *Imported by*: `src/project/patcher.js`, `tests/safety.test.js`
-- **MIN_SIZE_RATIO** (const)
-- **findPlaceholder** (function)
-- **checkJsSyntax** (function): Syntax-only check for JS. Tries ESM first, then CommonJS, so it works - regardless of which module system the target project uses.
-- **validateFileUpdate** (function): Validates one proposed file write BEFORE anything touches the disk.
-
-### 📄 src/safety/safe-path.js (78 lines)
-- *Imported by*: `src/project/file-manager.js`, `src/project/patcher.js`, `src/project/rollback.js`, `tests/safety.test.js`
-- **resolveInside** (function): Resolves a model-supplied path against the project root and guarantees - the result stays inside that root (blocks "../" traversal and absolute paths).
-- **isSecretPath** (function): Secrets: must never be sent to a cloud LLM.
-- **isProtectedPath** (function): Paths the agent may neither modify nor delete (case-insensitive on Windows/macOS filesystems).
-- **resolveProjectFile** (function): Resolve + protect: returns both absolute and POSIX-style relative path, - or throws if the path is unsafe to write.
-
-### 📄 tests/engine.test.js (77 lines)
+### 📄 tests/engine.test.js (74 lines)
 - *Imports*: `src/config.js`, `src/llm/index.js`, `src/engine/command-runner.js`, `src/engine/io.js`, `src/engine/linter.js`, `src/engine/tester.js`
 - *Role*: Entry point / Controller / Service / Test
 - (Internal logic / No exported functions)
@@ -281,14 +259,6 @@
 - **add** (function)
 - **run** (function)
 - **stop** (function)
-- **default** (default export)
-
-### 📄 tests/safety.test.js (76 lines)
-- *Imports*: `src/safety/safe-path.js`, `src/safety/patch-guard.js`, `src/safety/command-guard.js`, `src/safety/json-utils.js`
-- *Role*: Entry point / Controller / Service / Test
-- **v** (const)
-- **a** (const)
-- **b** (const)
 - **default** (default export)
 
 ### 📄 tests/task-runner.test.js (119 lines)

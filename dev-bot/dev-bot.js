@@ -103,12 +103,12 @@ bot.on('message', (msg) => {
 
     taskRunning = true;
     bot.sendMessage(chatId, `⏳ Принял задачу (проект ${activeProject}). Запускаю Агента...`);
-    fs.writeFileSync(path.join(agentDir, 'agent_task.txt'), text);
 
-    // Без shell и без PowerShell: проект передаётся через окружение, работает на любой ОС
+    // Без shell и без PowerShell: проект и задача передаются через окружение только этого процесса
+    // (не через общий файл, который подхватил бы и ручной запуск агента). Работает на любой ОС.
     execFile(process.execPath, ['agent.js'], {
         cwd: agentDir,
-        env: { ...process.env, AUTO_PROJECT: activeProject },
+        env: { ...process.env, AUTO_PROJECT: activeProject, DEV_TASK: text },
         timeout: 10 * 60 * 1000,
         maxBuffer: 10 * 1024 * 1024,
     }, (error, stdout, stderr) => {

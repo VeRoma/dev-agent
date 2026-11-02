@@ -1,13 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ROOT, setTargetProject } from './src/config.js';
+import { acquireProjectLock } from '@veroma/ai-core/lock';
+import { setTargetProject } from './src/config.js';
 import { listProjects, resolveProject, projectPath, PROJECTS_DIR } from './src/project/projects.js';
 import { getStatePaths, STATE_DIR_NAME } from './src/project/state-paths.js';
 import { readProjectMap, buildProjectMap } from './src/project/project-map.js';
 import { ask, closeTerminal } from './src/cli/terminal.js';
 import { startCLI } from './src/cli/chat-loop.js';
-
-const TASK_FILE = path.join(AGENT_ROOT, 'agent_task.txt'); // сюда пишет Telegram-бот
 
 function fail(message) {
     console.error(`\n❌ [ERROR] ${message}`);
@@ -45,7 +44,10 @@ function prepareProject(name) {
     const { targetAbsolute, stateDir } = getStatePaths();
     console.log(`\n✅ [SUCCESS] Выбран проект: ${name}`);
 
-    fs.mkdirSync(stateDir, { recursive: true });
+    // Один агент на проект: задача из Telegram, пока открыт терминал, перезаписывала бы те же файлы
+    const lock = acquireProjectLock(stateDir);
+    if (!lock.ok) fail(`С проектом ${name} уже работает другой Dev-Agent (pid ${lock.pid}). Дождитесь его завершения.`);
+
     if (!readProjectMap()) {
         console.log('ℹ️ [INFO] Карта проекта не найдена, строю...');
         try { buildProjectMap(); } catch (error) { console.log(`⚠️ [WARN] Не удалось построить карту: ${error.message}`); }
@@ -66,15 +68,13 @@ async function main() {
 
     prepareProject(await chooseProject());
 
-    // Директива от Telegram-бота
-    if (fs.existsSync(TASK_FILE)) {
-        const task = fs.readFileSync(TASK_FILE, 'utf-8').trim();
-        fs.unlinkSync(TASK_FILE);
-        if (task) {
-            closeTerminal();
-            await startCLI(task);
-            return;
-        }
+    // Директива от Telegram-бота приходит в окружении только этого процесса:
+    // ручной запуск никогда не подхватит чужую задачу
+    const task = process.env.DEV_TASK?.trim();
+    if (task) {
+        closeTerminal();
+        await startCLI(task);
+        return;
     }
 
     await startCLI();
