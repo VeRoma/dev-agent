@@ -5,16 +5,17 @@ import { startSupervisedServer, stopDevServer } from '../engine/server-superviso
 import { generateDocumentation } from '../project/history.js';
 import { buildProjectMap } from '../project/project-map.js';
 import { abortSessionPatches, applyRedoPatches, clearSessionBackups } from '../project/rollback.js';
-import { resolveProject } from '../project/projects.js';
+import { scanProjects, resolveProject, noAccessMessage } from '../project/projects.js';
 import { SELF_PROJECT, SELF_BRANCH, selfDiff } from '../project/self-workspace.js';
 import { runTests } from '../engine/tester.js';
 import { openProject } from './project-setup.js';
 
 /** Switches the target project in a running session; on failure the current project stays. */
 function switchProject(selector) {
-    const name = resolveProject(selector);
+    const { projects, inaccessible } = scanProjects();
+    const name = resolveProject(selector, projects);
     if (!name) {
-        console.log('\n⚠️ Такого проекта нет. Пример: /p 3, /p имя-проекта, /p self');
+        console.log(`\n⚠️ ${noAccessMessage(selector, inaccessible) ?? 'Такого проекта нет. Пример: /p 3, /p имя-проекта, /p self'}`);
         return;
     }
     stopDevServer({ quiet: true });

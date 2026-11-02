@@ -2,7 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { execFile } from 'child_process';
 import path from 'path';
 // Same project rules as the agent (one implementation): ../repositories, plus "self" / 0 — the agent itself
-import { listProjects, resolveProject } from '../src/project/projects.js';
+import { scanProjects, resolveProject, noAccessMessage, inaccessibleLabel } from '../src/project/projects.js';
 import { SELF_PROJECT, SELF_BRANCH } from '../src/project/self-workspace.js';
 import { classifyExternalTask, EXTERNAL_COMMANDS } from '../src/cli/external-task.js';
 
@@ -78,9 +78,11 @@ bot.on('message', (msg) => {
     if (lower === '/list' || lower === '/projects') {
         try {
             const mark = (name) => (name === activeProject ? '✅' : '  ');
+            const { projects, inaccessible } = scanProjects();
             const lines = [
                 `${mark(SELF_PROJECT)} [0] self — сам dev-agent (worktree, ветка ${SELF_BRANCH})`,
-                ...listProjects().map((name, i) => `${mark(name)} [${i + 1}] ${name}`),
+                ...projects.map((name, i) => `${mark(name)} [${i + 1}] ${name}`),
+                ...inaccessible.map((name) => `   ${inaccessibleLabel(name)}`),
             ];
             bot.sendMessage(chatId,
                 `📂 Доступные проекты:\n\n${lines.join('\n')}\n\nТекущий проект: ${activeProject ?? 'не выбран'}\nЧтобы сменить, отправь: /p <номер или имя>`);
@@ -92,9 +94,10 @@ bot.on('message', (msg) => {
 
     if (lower === '/p' || lower.startsWith('/p ')) {
         try {
-            const selected = resolveProject(text.slice(2));
+            const { projects, inaccessible } = scanProjects();
+            const selected = resolveProject(text.slice(2), projects);
             if (!selected) {
-                bot.sendMessage(chatId, '⚠️ Такого проекта нет. Пример: /p 3, /p имя-проекта, /p self. Список: /list');
+                bot.sendMessage(chatId, `⚠️ ${noAccessMessage(text.slice(2), inaccessible) ?? 'Такого проекта нет. Пример: /p 3, /p имя-проекта, /p self. Список: /list'}`);
             } else {
                 activeProject = selected;
                 const note = selected === SELF_PROJECT

@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { listProjects, resolveProject } from '../src/project/projects.js';
+import { listProjects, scanProjects, resolveProject, noAccessMessage, inaccessibleLabel } from '../src/project/projects.js';
 import { listProjectFiles } from '../src/project/file-manager.js';
 import { buildProjectMap, readProjectMap, analyzeFile } from '../src/project/project-map.js';
 import { getStatePaths, STATE_DIR_NAME } from '../src/project/state-paths.js';
@@ -27,6 +27,25 @@ test('projects: stable sorted list, hidden dirs and files skipped; select by num
     for (const bad of ['4', 'nope', '', null]) assert.equal(resolveProject(bad, projects), null, String(bad));
     // 0 / "self" — the agent itself (self-improvement worktree)
     for (const self of ['0', 'self', 'SELF']) assert.equal(resolveProject(self, projects), 'self', self);
+});
+
+test('projects: an access-denied folder is listed apart (not numbered, not selectable); a broken link is skipped', () => {
+    const base = tmp();
+    for (const d of ['alpha', 'locked', 'zeta', 'broken']) fs.mkdirSync(path.join(base, d));
+    const deny = { locked: 'EPERM', broken: 'ENOENT' };
+    const stat = (p) => {
+        const code = deny[path.basename(p)];
+        if (code) throw Object.assign(new Error(code), { code });
+        return fs.statSync(p);
+    };
+    const { projects, inaccessible } = scanProjects(base, { stat });
+    assert.deepEqual(projects, ['alpha', 'zeta']);
+    assert.deepEqual(inaccessible, ['locked']);
+    assert.equal(resolveProject('2', projects), 'zeta', 'numbers are not shifted by the locked folder');
+    assert.equal(resolveProject('locked', projects), null);
+    assert.match(noAccessMessage(' locked ', inaccessible), /Нет доступа.*locked/);
+    assert.equal(noAccessMessage('nope', inaccessible), null);
+    assert.match(inaccessibleLabel('locked'), /locked — нет доступа/);
 });
 
 test('state-paths: everything derives from one state dir inside the project', () => {

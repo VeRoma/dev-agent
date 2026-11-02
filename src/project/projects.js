@@ -6,19 +6,46 @@ import { SELF_PROJECT } from './self-workspace.js';
 // Folder with the projects the agent works on
 export const PROJECTS_DIR = path.resolve(AGENT_ROOT, '..', 'repositories');
 
-/** Sorted project names (stable order, the same for the agent and the bot). "self" is reserved. */
-export function listProjects(baseDir = PROJECTS_DIR) {
+// The OS denies access (e.g. a junction into a protected folder): shown in menus, never selectable
+const NO_ACCESS_CODES = new Set(['EPERM', 'EACCES']);
+
+/**
+ * Project folders, sorted (stable order, the same for the agent and the bot). "self" is reserved.
+ * @returns {{projects: string[], inaccessible: string[]}} inaccessible ones are not numbered,
+ *   so they never shift the numbers of selectable projects; broken links are skipped silently
+ */
+export function scanProjects(baseDir = PROJECTS_DIR, { stat = fs.statSync } = {}) {
     const agentFolder = path.basename(AGENT_ROOT);
-    return fs.readdirSync(baseDir)
-        .filter((name) => {
-            if (name.startsWith('.') || name === agentFolder || name.toLowerCase() === SELF_PROJECT) return false;
-            try {
-                return fs.statSync(path.join(baseDir, name)).isDirectory();
-            } catch {
-                return false;
-            }
-        })
-        .sort((a, b) => a.localeCompare(b));
+    const projects = [];
+    const inaccessible = [];
+    const names = fs.readdirSync(baseDir).sort((a, b) => a.localeCompare(b));
+    for (const name of names) {
+        if (name.startsWith('.') || name === agentFolder || name.toLowerCase() === SELF_PROJECT) continue;
+        try {
+            if (stat(path.join(baseDir, name)).isDirectory()) projects.push(name);
+        } catch (error) {
+            if (NO_ACCESS_CODES.has(error?.code)) inaccessible.push(name);
+        }
+    }
+    return { projects, inaccessible };
+}
+
+/** Selectable project names. */
+export function listProjects(baseDir = PROJECTS_DIR) {
+    return scanProjects(baseDir).projects;
+}
+
+/** Menu line for a folder the OS denies access to. */
+export function inaccessibleLabel(name) {
+    return `⛔ ${name} — нет доступа`;
+}
+
+/** Explains a failed selection that names an inaccessible folder; null otherwise. */
+export function noAccessMessage(selector, inaccessible) {
+    const value = String(selector ?? '').trim();
+    return inaccessible.includes(value)
+        ? `Нет доступа к папке проекта ${value}: система отказывает в чтении (проверьте права или цель ссылки).`
+        : null;
 }
 
 /**
