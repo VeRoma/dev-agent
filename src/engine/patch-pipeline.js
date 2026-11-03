@@ -1,10 +1,21 @@
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { applyPatches } from '../project/patcher.js';
 import { runCommands, isTestCommand } from './command-runner.js';
 import { runProjectChecks } from './checks.js';
 import { appendToSession } from './session.js';
 
 const isGitRecordCommand = (command) => /^\s*git\s+(add|commit)\b/.test(String(command));
+
+/** True when the git index has nothing staged (a failed "git commit" then had nothing to do). */
+function nothingStaged(cwd) {
+    try {
+        execFileSync('git', ['diff', '--cached', '--quiet'], { cwd, stdio: 'ignore' });
+        return true;
+    } catch {
+        return false; // staged changes exist, or not a git repository
+    }
+}
 
 /**
  * One "patch" pass: (git add/commit of the previous step) -> apply files -> run commands -> check the code.
@@ -13,6 +24,7 @@ const isGitRecordCommand = (command) => /^\s*git\s+(add|commit)\b/.test(String(c
  * outcome:
  *   'empty'        — nothing to do in the response
  *   'rejected'     — the guard rejected the patch, nothing was written to disk
+ *   'commit_failed' — the commit of the previous step failed or was declined, nothing was written
  *   'completed'    — no code changes (audit / commands only)
  *   'clean'        — patch applied, linter and tests passed
  *   'check_failed' — patch applied, checks found errors
@@ -33,10 +45,16 @@ export async function runPatch(parsed, { targetProject, targetAbsolute }) {
     commands = commands.filter(c => !gitFirst.includes(c));
     if (gitFirst.length > 0) {
         const { failed, skipped } = await runCommands(gitFirst, { cwd: targetAbsolute });
-        if (failed.length > 0 || skipped.length > 0) {
+        // "nothing to commit" (the step was committed already) is not a failure: nothing is left behind
+        const realFailures = failed.filter(f => !(/^\s*git\s+commit\b/.test(f.command) && nothingStaged(targetAbsolute)));
+        if (realFailures.length > 0 || skipped.length > 0) {
             console.log('\n⏸️ Коммит предыдущего шага не выполнен — новые правки не применяю.');
             appendToSession('user', '[SYSTEM] The commit of the previous step did not run, so NONE of your file changes were written. Wait for the developer.');
-            return { outcome: 'completed' };
+            return { outcome: 'commit_failed' };
+        }
+        if (failed.length > 0) {
+            console.log('ℹ️ Коммитить было нечего (шаг уже закоммичен) — продолжаю.');
+            appendToSession('user', '[SYSTEM] "git commit" had nothing to commit: the previous step was already committed. Your file changes are being applied.');
         }
     }
 

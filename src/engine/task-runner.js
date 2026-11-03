@@ -88,6 +88,11 @@ async function handlePatch(parsed, attempt, ctx) {
             restartIfRequested(parsed);
             return { done: true };
 
+        case 'commit_failed':
+            // Not "completed": the model must not believe its changes are on disk
+            appendToSession('agent', `[PATCH NOT APPLIED — the previous step's commit failed]: ${parsed.message}`);
+            return { done: true };
+
         case 'clean':
             console.log('✅ [SUCCESS] Проверки пройдены. Код чист.');
             appendToSession('agent', `[PATCH APPLIED SUCCESSFULLY]: ${parsed.message}`);
