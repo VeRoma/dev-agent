@@ -12,3 +12,6 @@ build
 .meta-agent/
 agent_task.txt
 .agent_backup/
+
+# Eval runs (npm run eval): logs and results stay local
+evals/results/

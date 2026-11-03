@@ -79,6 +79,18 @@ test('command-runner: test-suite commands are recognized (post-patch checks run 
     }
 });
 
+test('tester: a failing project test is reported even when the agent itself runs under node --test', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-failing-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module","scripts":{"test":"node --test"}}');
+        fs.writeFileSync(path.join(dir, 'a.test.js'), "import test from 'node:test';\ntest('x', () => { throw new Error('boom'); });\n");
+        assert.ok(process.env.NODE_TEST_CONTEXT, 'precondition: running under node --test');
+        assert.equal((await runTests(dir)).ok, false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('checks: missing ESLint / ESLint config / test script are warnings, not code errors', async () => {
     const linter = await runLinter(process.cwd());
     assert.equal(typeof linter.ok, 'boolean');

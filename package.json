@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node agent.js",
     "agent": "node agent.js",
-    "test": "node --test"
+    "test": "node --test",
+    "eval": "node evals/run.js"
   },
   "engines": {
     "node": ">=20.12"

@@ -24,7 +24,10 @@ src/project/             everything about project files
   self-workspace.js        self mode: git worktree of the agent repo (branch self-improve), never the running copy
   history.js, projects.js, editor.js
 dev-bot/                 Telegram bot (own package.json, ESM)
-tests/                   node --test
+evals/                   agent quality benchmark (npm run eval, real models): tasks.js (fixture, prompt, hidden tests,
+                         checks, reference solution), harness.js (fixture/grading/metrics), run.js (runner, comparison
+                         with the previous run), agent-task.js (one task in a child process); results/ is local only
+tests/                   node --test (evals.test.js proves every eval fails untouched and passes on its solution)
 ```
 
 Shared with meta-agent, from `@veroma/ai-core`: model tiers, providers and fallbacks, the orchestrator,
