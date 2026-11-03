@@ -8,7 +8,7 @@ import { listProjects, scanProjects, resolveProject, noAccessMessage, inaccessib
 import { listProjectFiles } from '../src/project/file-manager.js';
 import { buildProjectMap, readProjectMap, analyzeFile } from '../src/project/project-map.js';
 import { getStatePaths, STATE_DIR_NAME } from '../src/project/state-paths.js';
-import { extractMentions, resolveMention } from '../src/engine/context-builder.js';
+import { extractMentions, resolveMention, selectContext } from '../src/engine/context-builder.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-proj-'));
 const write = (root, rel, content = '') => {
@@ -97,4 +97,16 @@ test('mentions: e-mails and model tags are not files; trailing punctuation is tr
     assert.equal(resolveMention('llm/index.js', known), 'src/llm/index.js');
     assert.equal(resolveMention('agent.js', known), 'agent.js');
     assert.equal(resolveMention('ghost.js', known), undefined);
+});
+
+test('mentions: files outside the map (.gitignore) can be requested with @, secrets still cannot', async () => {
+    const root = tmp();
+    write(root, 'src/a.js', 'export const a = 1;\n');
+    write(root, '.gitignore', '.env\n');
+    write(root, '.env', 'SECRET=1\n');
+    // depth > 0: auto-loading continuation, no orchestrator (network) call
+    const ctx = await selectContext('[SYSTEM] Дополнительно загружены файлы: @.gitignore @.env', root, { depth: 1 });
+    assert.deepEqual(ctx.relevantFiles, ['.gitignore']);
+    assert.ok(!ctx.knownFiles.includes('.env'));
+    assert.ok(!readProjectMap(root).files.has('.gitignore'), 'precondition: the map does not index .gitignore');
 });

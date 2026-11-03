@@ -21,6 +21,7 @@ src/project/             everything about project files
   file-manager.js          file list (.agentignore) and reading the context
   project-map.js           PROJECT_MAP.md (JS/TS exports, Java/Python classes, line counts, ⚠️ [GOD FILE])
   patcher.js, backups.js, rollback.js   writing patches, v2 backups, /abort and /redo
+  edits.js                 search/replace edits -> full file content (guards then check the whole file)
   self-workspace.js        self mode: git worktree of the agent repo (branch self-improve), never the running copy
   history.js, projects.js, editor.js
 dev-bot/                 Telegram bot (own package.json, ESM)

@@ -5,17 +5,19 @@ import { resolveProjectFile, validateFileUpdate } from '@veroma/ai-core/safety';
 import { newBackupPath, readCreated, writeCreated, hasBackup } from './backups.js';
 import { openInEditor } from './editor.js';
 import { buildProjectMap } from './project-map.js';
+import { resolveFileContent } from './edits.js';
 
 /**
- * Применяет патч по принципу «всё или ничего»: сначала валидация всех файлов,
- * и только если всё чисто — запись на диск.
+ * Applies a patch all-or-nothing: every file is validated first, and only if all are clean
+ * anything is written to disk. A file comes as full "content" or as search/replace "edits"
+ * (resolved to the full content before the guards run).
  * @returns {Promise<{applied: string[], rejected: {path: string, reason: string}[]}>}
  */
 export async function applyPatches(targetProject, filesToUpdate = [], filesToDelete = []) {
     const { backupDir, targetAbsolute } = getStatePaths(targetProject);
     fs.mkdirSync(backupDir, { recursive: true });
 
-    // 0. Валидация (ничего не пишем, пока не проверили всё)
+    // 0. Validation (nothing is written until everything is checked)
     const rejected = [];
     const updates = [];
     const deletions = [];
@@ -24,9 +26,10 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
         try {
             const { absolutePath, relativePath } = resolveProjectFile(targetAbsolute, file?.path);
             const previous = fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, 'utf-8') : null;
-            const check = validateFileUpdate(relativePath, previous, file?.content);
+            const content = resolveFileContent(file, previous);
+            const check = validateFileUpdate(relativePath, previous, content);
             if (!check.ok) throw new Error(check.reason);
-            updates.push({ absolutePath, relativePath, content: file.content, existed: previous !== null });
+            updates.push({ absolutePath, relativePath, content, existed: previous !== null });
         } catch (error) {
             rejected.push({ path: file?.path ?? '(no path)', reason: error.message });
         }
@@ -49,7 +52,7 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
     const applied = [];
     const created = readCreated(backupDir);
 
-    // 1. Обновления и создания
+    // 1. Updates and creations
     for (const file of updates) {
         if (file.existed) {
             const backupPath = newBackupPath(backupDir, file.relativePath);
@@ -57,7 +60,7 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
             console.log(`💾 Backup saved: .dev-agent/backups/${path.basename(backupPath)}`);
         } else {
             fs.mkdirSync(path.dirname(file.absolutePath), { recursive: true });
-            // Файл, удалённый ранее в этой сессии, имеет бэкап — его надо восстановить, а не удалить
+            // A file deleted earlier in this session has a backup: it must be restored, not deleted, on /abort
             if (!created.includes(file.relativePath) && !hasBackup(backupDir, file.relativePath)) {
                 created.push(file.relativePath);
             }
@@ -70,7 +73,7 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
     }
     writeCreated(backupDir, created);
 
-    // 2. Удаления (с обязательным бэкапом)
+    // 2. Deletions (always backed up first)
     for (const file of deletions) {
         if (fs.existsSync(file.absolutePath) && fs.statSync(file.absolutePath).isFile()) {
             const backupPath = newBackupPath(backupDir, file.relativePath);
@@ -84,7 +87,7 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
         }
     }
 
-    // 3. Обновляем карту проекта
+    // 3. Refresh the project map
     if (updates.length > 0 || deletions.length > 0) {
         try {
             console.log('[Dev-Agent] 🔄 Обновление карты проекта...');

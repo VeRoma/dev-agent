@@ -4,9 +4,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-process.env.DEV_AGENT_NO_EDITOR = '1'; // не открывать VS Code из тестов
+process.env.DEV_AGENT_NO_EDITOR = '1'; // do not open VS Code from tests
 
 const { applyPatches } = await import('../src/project/patcher.js');
+const { applyEdits } = await import('../src/project/edits.js');
 const { abortSessionPatches, applyRedoPatches } = await import('../src/project/rollback.js');
 const { readFilesContent } = await import('../src/project/file-manager.js');
 const { getStatePaths } = await import('../src/project/state-paths.js');
@@ -32,6 +33,50 @@ test('patcher: traversal is rejected and NOTHING is written (all-or-nothing)', a
     assert.equal(result.applied.length, 0);
     assert.equal(read(dir, 'src/a.js'), 'export const a = 1;\n');
     assert.ok(!fs.existsSync(path.join(path.dirname(dir), outsideName)));
+});
+
+test('edits: in order, exactly one match each, file line endings kept', () => {
+    const src = 'const a = 1;\nconst b = 2;\nconst a2 = 1;\n';
+    assert.equal(
+        applyEdits(src, [{ search: 'const b = 2;', replace: 'const b = 3;' }, { search: 'const b = 3;\n', replace: '' }]),
+        'const a = 1;\nconst a2 = 1;\n',
+    );
+    // Model sends \n, the Windows file has \r\n: matched and written with \r\n
+    assert.equal(applyEdits('x();\r\ny();\r\n', [{ search: 'x();\ny();', replace: 'x();\nz();' }]), 'x();\r\nz();\r\n');
+
+    assert.throws(() => applyEdits(src, [{ search: 'nope', replace: '' }]), /edit #1: "search" not found/);
+    assert.throws(() => applyEdits(src, [{ search: ' = 1;', replace: '' }]), /matches 2 places/);
+    assert.throws(() => applyEdits(src, [{ search: '  ', replace: 'x' }]), /non-empty string/);
+    assert.throws(() => applyEdits(src, []), /non-empty array/);
+    // A later edit sees the result of the earlier one
+    assert.throws(() => applyEdits(src, [{ search: 'const b = 2;', replace: 'B' }, { search: 'const b = 2;', replace: 'C' }]), /edit #2/);
+});
+
+test('patcher: search/replace edits patch a big file without resending it; a bad edit rejects the whole patch', async () => {
+    const dir = makeProject();
+    const big = Array.from({ length: 300 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n';
+    fs.writeFileSync(path.join(dir, 'src', 'big.js'), big);
+
+    const ok = await applyPatches(dir, [{ path: 'src/big.js', edits: [{ search: 'export const v150 = 150;', replace: 'export const v150 = -150;' }] }]);
+    assert.deepEqual(ok.applied, ['src/big.js']);
+    assert.equal(read(dir, 'src/big.js'), big.replace('v150 = 150;', 'v150 = -150;'));
+    const backups = fs.readdirSync(getStatePaths(dir).backupDir).filter(f => f !== 'created.json');
+    assert.equal(backups.length, 1, 'edited file is backed up like a full rewrite');
+
+    // One failing edit in one file: nothing is written in any file
+    const bad = await applyPatches(dir, [
+        { path: 'src/a.js', content: 'export const a = 2;\n' },
+        { path: 'src/big.js', edits: [{ search: 'export const v7 = 999;', replace: 'x' }] },
+    ]);
+    assert.equal(bad.applied.length, 0);
+    assert.match(bad.rejected[0].reason, /not found/);
+    assert.equal(read(dir, 'src/a.js'), 'export const a = 1;\n');
+
+    // Guards still see the full result: edits cannot produce broken JS, a new file needs "content"
+    assert.match((await applyPatches(dir, [{ path: 'src/a.js', edits: [{ search: 'const a = 1', replace: 'const = ' }] }])).rejected[0].reason, /syntax/i);
+    assert.match((await applyPatches(dir, [{ path: 'src/new.js', edits: [{ search: 'x', replace: 'y' }] }])).rejected[0].reason, /existing file/);
+    assert.match((await applyPatches(dir, [{ path: 'src/a.js', content: 'x', edits: [] }])).rejected[0].reason, /not both/);
+    assert.equal(read(dir, 'src/a.js'), 'export const a = 1;\n');
 });
 
 test('patcher: protects .env, .git and agent state; placeholder and broken JS are rejected', async () => {

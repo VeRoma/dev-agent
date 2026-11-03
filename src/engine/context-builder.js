@@ -1,5 +1,7 @@
 import path from 'path';
 import { ensureProjectMap } from '../project/project-map.js';
+import { listProjectFiles } from '../project/file-manager.js';
+import { getStatePaths } from '../project/state-paths.js';
 import { orchestrate, translateToEnglish } from '../llm/index.js';
 
 // Tags in the task text that force an executor tier (llm.tiers)
@@ -56,7 +58,10 @@ export function keepKnownFiles(files, knownFiles) {
  */
 export async function selectContext(text, targetProject, { depth = 0, inheritedFiles = [], tier = null, tierForced = false, forceFullAudit = false } = {}) {
     const map = ensureProjectMap(targetProject);
-    const knownFiles = [...map.files];
+    // The map indexes code/config files only; @mentions may name any allowed file (.gitignore, Dockerfile).
+    // Map files first: a bare name like "@index" should resolve to code. Secrets are never listed.
+    const allFiles = listProjectFiles(getStatePaths(targetProject).targetAbsolute);
+    const knownFiles = [...new Set([...map.files, ...allFiles])];
 
     const forced = [];
     for (const mention of extractMentions(text)) {

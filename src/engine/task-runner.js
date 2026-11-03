@@ -96,7 +96,7 @@ async function handlePatch(parsed, attempt, ctx) {
             }
             const reasons = result.rejected.map(r => `- ${r.path}: ${r.reason}`).join('\n');
             console.log(`⚠️ [WARN] Патч отклонён защитой. Запрашиваю исправленный вариант (Attempt ${attempt + 1}/${MAX_HEALING_ATTEMPTS})...`);
-            appendToSession('user', `[SYSTEM ERROR] Your patch was rejected and NOTHING was written to disk:\n${reasons}\nReturn the COMPLETE content of every file (no placeholders like "rest of code unchanged") using project-relative paths inside the project.`);
+            appendToSession('user', `[SYSTEM ERROR] Your patch was rejected and NOTHING was written to disk:\n${reasons}\nFix the reasons above and send the patch again. CODE CONTEXT shows the files as they are now: copy every "search" verbatim from there. "content" must be the COMPLETE file (no placeholders like "rest of code unchanged"). Use project-relative paths inside the project.`);
             return { done: false, failed: true };
         }
 
