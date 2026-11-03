@@ -8,7 +8,7 @@ import { fallbackChain, pickProvider, isLocalModel } from '../src/llm/index.js';
 import { normalizeCommand, runCommands, isTestCommand } from '../src/engine/command-runner.js';
 import { setConfirmHandler } from '../src/engine/io.js';
 import { runLinter } from '../src/engine/linter.js';
-import { runTests } from '../src/engine/tester.js';
+import { runTests, findMavenModules } from '../src/engine/tester.js';
 
 // Commands log to the session of the selected project: a temp one, never a real project
 setTargetProject(fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-engine-')));
@@ -89,6 +89,57 @@ test('tester: a failing project test is reported even when the agent itself runs
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test('tester: Maven modules are found from the changed files (nearest pom.xml)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-mvn-'));
+    try {
+        fs.mkdirSync(path.join(root, 'backend/src/main/java'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'backend/pom.xml'), '<project/>');
+        fs.mkdirSync(path.join(root, 'frontend/src'), { recursive: true });
+        assert.deepEqual(findMavenModules(root, [{ path: 'backend/src/main/java/A.java' }, 'backend/src/test/B.java', 'frontend/src/a.js']), ['backend']);
+        assert.deepEqual(findMavenModules(root, ['frontend/src/a.js', '../outside/A.java']), []);
+        fs.writeFileSync(path.join(root, 'pom.xml'), '<project/>');
+        assert.deepEqual(findMavenModules(root, ['tools/X.java']), ['']);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('tester: Maven tests run through the wrapper, failures are reported, the agent secrets never reach them', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-mvnw-'));
+    const saved = process.env.TELEGRAM_BOT_TOKEN;
+    process.env.TELEGRAM_BOT_TOKEN = 'agent-bot-token-must-not-leak';
+    const writeWrapper = (exitCode) => {
+        fs.writeFileSync(path.join(root, 'backend/mvnw.cmd'),
+            `@echo off\r\necho [INFO] Building\r\necho [ERROR] Tests run: 3, Failures: ${exitCode} TOKEN=%TELEGRAM_BOT_TOKEN% ARGS=%*\r\nexit /b ${exitCode}\r\n`);
+        fs.writeFileSync(path.join(root, 'backend/mvnw'),
+            `#!/bin/sh\necho "[INFO] Building"\necho "[ERROR] Tests run: 3, Failures: ${exitCode} TOKEN=$TELEGRAM_BOT_TOKEN ARGS=$*"\nexit ${exitCode}\n`, { mode: 0o755 });
+    };
+    try {
+        fs.mkdirSync(path.join(root, 'backend/src'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'backend/pom.xml'), '<project/>');
+
+        writeWrapper(1);
+        const failed = await runTests(root, ['backend/src/A.java']);
+        assert.equal(failed.ok, false);
+        assert.match(failed.output, /Tests run: 3, Failures: 1/);
+        assert.match(failed.output, /ARGS=-B test/);
+        assert.ok(!failed.output.includes('agent-bot-token-must-not-leak'), 'the agent bot token must not reach project tests');
+
+        writeWrapper(0);
+        assert.equal((await runTests(root, ['backend/src/A.java'])).ok, true);
+    } finally {
+        if (saved === undefined) delete process.env.TELEGRAM_BOT_TOKEN; else process.env.TELEGRAM_BOT_TOKEN = saved;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('command-runner: Maven test runs count as test commands', () => {
+    for (const c of ['mvnw test', './mvnw -B test', '.\\mvnw test', 'mvnw.cmd test', 'mvn -q test', 'cd backend && mvnw test']) {
+        assert.ok(isTestCommand(c), c);
+    }
+    assert.ok(!isTestCommand('mvnw package'));
 });
 
 test('checks: missing ESLint / ESLint config / test script are warnings, not code errors', async () => {

@@ -2,6 +2,7 @@ import { spawn, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { getStatePaths } from '../project/state-paths.js';
+import { projectChildEnv } from '@veroma/ai-core/safety';
 
 const OUTPUT_TAIL = 8000;  // how much of the latest output to keep for the model
 let currentProcess = null;
@@ -77,7 +78,7 @@ export function runDevServer(targetProject, onErrorCallback) {
         try { execSync('powershell -ExecutionPolicy Bypass -File .\\stop.ps1', { cwd: runPath, stdio: 'ignore' }); } catch { /* not running */ }
 
         console.log('⚙️ Выполняю start.ps1...');
-        execSync('powershell -ExecutionPolicy Bypass -File .\\start.ps1', { cwd: runPath });
+        execSync('powershell -ExecutionPolicy Bypass -File .\\start.ps1', { cwd: runPath, env: projectChildEnv().env });
         currentProcess = { isJava: true, runPath };
 
         // Find the latest log file (server_*.log) and tail it
@@ -105,7 +106,7 @@ export function runDevServer(targetProject, onErrorCallback) {
     const script = pickNpmScript(runPath);
     console.log(`⚙️ Выполняю npm run ${script}...`);
 
-    const child = spawn('npm', ['run', script], { cwd: runPath, shell: true });
+    const child = spawn('npm', ['run', script], { cwd: runPath, shell: true, env: projectChildEnv().env });
     currentProcess = child;
     const onOutput = (data) => {
         if (isNodeCrashOutput(collect(data))) reportCrash(onErrorCallback, log);

@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { getStatePaths } from '../project/state-paths.js';
+import { projectChildEnv } from '@veroma/ai-core/safety';
 
 function runProcess(command, args, cwd) {
     return new Promise((resolve) => {
@@ -9,7 +10,7 @@ function runProcess(command, args, cwd) {
         let stderr = '';
         let child;
         try {
-            child = spawn(command, args, { cwd, shell: process.platform === 'win32' });
+            child = spawn(command, args, { cwd, shell: process.platform === 'win32', env: projectChildEnv().env });
         } catch (error) {
             resolve({ code: -1, stdout: '', stderr: String(error?.message ?? error) });
             return;

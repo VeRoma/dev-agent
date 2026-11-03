@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { classifyCommand } from '@veroma/ai-core/safety';
+import { classifyCommand, projectChildEnv } from '@veroma/ai-core/safety';
 import { confirm } from './io.js';
 import { appendToSession } from './session.js';
 
@@ -11,14 +11,17 @@ export function normalizeCommand(command) {
     return String(command ?? '').trim().replace(/\s+/g, ' ');
 }
 
-/** Test-suite runs; after a code change the post-patch checks run the tests anyway. */
+/** Test-suite runs (npm, node --test, Maven); after a code change the post-patch checks run the tests anyway. */
 export function isTestCommand(command) {
-    return /^(npm (test|t|run test)|node --test)(\s|$)/.test(normalizeCommand(command));
+    const cmd = normalizeCommand(command);
+    return /^(npm (test|t|run test)|node --test)(\s|$)/.test(cmd)
+        || /^(\.[\\/])?(mvnw(\.cmd)?|mvn)\b.*\btest\b/.test(cmd)
+        || /^cd \S+ && (\.[\\/])?(mvnw(\.cmd)?|mvn)\b.*\btest\b/.test(cmd);
 }
 
-/** Default runner: the command's output goes straight to the developer's terminal. */
+/** Default runner: the command's output goes straight to the developer's terminal; the agent's secrets stay out of its env. */
 function runInShell(command, { cwd }) {
-    execSync(command, { cwd, stdio: 'inherit' });
+    execSync(command, { cwd, stdio: 'inherit', env: projectChildEnv().env });
 }
 
 /**

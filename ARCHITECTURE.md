@@ -12,7 +12,7 @@ src/engine/              the "brain"
   prompt.js, executor.js   executor prompt (task + orchestrator plan) and the JSON call (one retry)
   patch-pipeline.js        patch -> commands -> checks, returns the outcome
   command-runner.js        command whitelist + confirmation (via io.js)
-  linter.js, tester.js, checks.js   ESLint/TS and npm test of the target project
+  linter.js, tester.js, checks.js   ESLint/TS; npm test or mvnw test (Maven module of a changed file), no agent secrets in env
   dev-server.js, server-supervisor.js   running the project; auto-fix only on real crashes, after confirmation
   session.js, io.js        dialog memory; bridge to the interface (confirmations, exclusive tasks)
 src/llm/                 the only ai-core adapter (index.js), token usage of the current task (usage.js), translation

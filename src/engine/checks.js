@@ -11,7 +11,7 @@ export async function runProjectChecks(targetProject, updatedFiles) {
     if (!lint.ok) return { success: false, kind: 'Linter', output: lint.output };
 
     console.log('✅ Линтер: ошибок кода нет. Запуск юнит-тестов...');
-    const tests = await runTests(targetProject);
+    const tests = await runTests(targetProject, updatedFiles);
     (tests.warnings || []).forEach(w => console.log(`⚠️ ${w}`));
     if (!tests.ok) return { success: false, kind: 'Tests', output: tests.output };
 
