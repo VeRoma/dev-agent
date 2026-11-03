@@ -8,6 +8,7 @@ import { selectContext, extractMentions, resolveMention } from './context-builde
 import { buildPrompt } from './prompt.js';
 import { askAgent } from './executor.js';
 import { runPatch } from './patch-pipeline.js';
+import { runCommands } from './command-runner.js';
 import { restartSupervisedServer } from './server-supervisor.js';
 
 const MAX_HEALING_ATTEMPTS = 3;  // how many times the agent may fix its own errors
@@ -34,11 +35,15 @@ function restartIfRequested(parsed) {
  * "chat" mode: show the reply; if the agent asks for files via @ — load them and continue.
  * @returns {Promise<boolean>} true if the continuation ran as a recursive call
  */
-async function handleChat(parsed, { knownFiles, relevantFiles, depth, tier, tierForced }) {
+async function handleChat(parsed, { knownFiles, relevantFiles, depth, tier, tierForced, targetAbsolute }) {
     banner('CHAT');
     console.log(parsed.message);
     footer();
     appendToSession('agent', parsed.message);
+
+    // A reply without file changes may still carry commands (git commit, git status): they used to be dropped silently
+    const commands = parsed.commandsToRun || [];
+    if (commands.length > 0) await runCommands(commands, { cwd: targetAbsolute });
 
     const newFiles = extractMentions(parsed.message || '')
         .map(mention => resolveMention(mention, knownFiles))
@@ -172,7 +177,7 @@ export async function processAgentTask(text, depth = 0, inheritedFiles = [], opt
             printPlan(parsed.plan);
 
             if (parsed.mode === 'chat') {
-                await handleChat(parsed, { knownFiles: ctx.knownFiles, relevantFiles, depth, tier: state.tier, tierForced: state.tierForced });
+                await handleChat(parsed, { knownFiles: ctx.knownFiles, relevantFiles, depth, tier: state.tier, tierForced: state.tierForced, targetAbsolute });
                 break;
             }
 

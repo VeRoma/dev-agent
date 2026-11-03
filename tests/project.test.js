@@ -68,6 +68,18 @@ test('file listing: relative POSIX paths; node_modules, state dirs and .env* exc
     assert.deepEqual(files, ['.env.example', 'src/a.js', 'src/deep/b.ts']);
 });
 
+test('file listing: the project .gitignore files (root and nested) keep build output out', () => {
+    const root = tmp();
+    write(root, '.gitignore', 'target/\n*.log\n');
+    write(root, 'backend/.gitignore', 'generated/\n');
+    write(root, 'backend/src/A.java'); write(root, 'backend/target/surefire/TEST-A.xml');
+    write(root, 'backend/target/classes/application.properties'); write(root, 'backend/generated/G.java');
+    write(root, 'frontend/generated/keep.js'); write(root, 'server.log');
+    const files = listProjectFiles(root, { agentRoot: tmp() });
+    assert.deepEqual(files, ['.gitignore', 'backend/.gitignore', 'backend/src/A.java', 'frontend/generated/keep.js'],
+        'a nested .gitignore applies only below its own folder');
+});
+
 test('project map: exports for JS/TS/Java/Python, saved in .dev-agent, secrets never indexed', () => {
     const root = tmp();
     write(root, 'src/a.js', '/** Adds numbers. */\nexport function add(a, b) { return a + b; }\nexport default class Foo {}\n');

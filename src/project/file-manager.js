@@ -4,7 +4,7 @@ import ignore from 'ignore';
 import { AGENT_ROOT } from '../config.js';
 import { resolveInside, isSecretPath } from '@veroma/ai-core/safety';
 
-// Игнорируется всегда, даже если забыли указать в .agentignore
+// Always ignored, even if missing from .agentignore
 const ALWAYS_IGNORED = ['.git', 'node_modules', '.dev-agent', '.meta-agent', '.agent_backup'];
 
 function buildIgnoreFilter(agentRoot) {
@@ -16,8 +16,8 @@ function buildIgnoreFilter(agentRoot) {
 }
 
 /**
- * Все разрешённые файлы проекта: относительные пути с прямыми слэшами, отсортированные.
- * Файлы с секретами (.env*) не попадают в список никогда.
+ * All allowed project files: relative paths with forward slashes, sorted.
+ * Secret files (.env*) are never listed; files ignored by the project .gitignore are skipped.
  */
 export function listProjectFiles(targetAbsolute, { agentRoot = AGENT_ROOT } = {}) {
     const root = path.resolve(targetAbsolute);
@@ -29,7 +29,17 @@ export function listProjectFiles(targetAbsolute, { agentRoot = AGENT_ROOT } = {}
     const ig = buildIgnoreFilter(agentRoot);
     const result = [];
 
-    const walk = (dir, relative = '') => {
+    // The project's own .gitignore files (root and nested) apply too: build output such as target/ stays out of the map
+    const gitignoreAt = (dir, base) => {
+        const file = path.join(dir, '.gitignore');
+        if (!fs.existsSync(file)) return null;
+        try { return { base, ig: ignore().add(fs.readFileSync(file, 'utf-8')) }; } catch { return null; }
+    };
+
+    const walk = (dir, relative, gitRules) => {
+        const own = gitignoreAt(dir, relative);
+        const rules = own ? [...gitRules, own] : gitRules;
+
         for (const item of fs.readdirSync(dir)) {
             const itemRelative = relative ? `${relative}/${item}` : item;
             const fullPath = path.join(dir, item);
@@ -37,22 +47,24 @@ export function listProjectFiles(targetAbsolute, { agentRoot = AGENT_ROOT } = {}
             let stat;
             try { stat = fs.statSync(fullPath); } catch { continue; }
 
-            // Для папок проверяем путь с "/" на конце, иначе правила вида "dist/" не срабатывают
-            if (ig.ignores(stat.isDirectory() ? `${itemRelative}/` : itemRelative)) continue;
+            // Directories are checked with a trailing "/", otherwise rules like "dist/" do not match
+            const probe = stat.isDirectory() ? `${itemRelative}/` : itemRelative;
+            if (ig.ignores(probe)) continue;
+            if (rules.some(r => r.ig.ignores(r.base ? probe.slice(r.base.length + 1) : probe))) continue;
             if (isSecretPath(itemRelative)) continue;
 
-            if (stat.isDirectory()) walk(fullPath, itemRelative);
+            if (stat.isDirectory()) walk(fullPath, itemRelative, rules);
             else if (stat.isFile()) result.push(itemRelative);
         }
     };
 
-    walk(root);
+    walk(root, '', []);
     return result.sort();
 }
 
 /**
- * Читает файлы и собирает единый текстовый контекст для LLM.
- * Относительные пути разрешаются от корня ЦЕЛЕВОГО проекта; файлы вне проекта и секреты пропускаются.
+ * Reads files and builds one text context for the LLM.
+ * Relative paths resolve from the TARGET project root; files outside the project and secrets are skipped.
  */
 export function readFilesContent(filePaths, targetAbsolute) {
     const root = path.resolve(targetAbsolute);

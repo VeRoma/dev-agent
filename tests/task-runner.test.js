@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execFileSync } from 'child_process';
 
 // Before importing modules: stub keys (loadEnvFile does not override set variables), no VS Code
 process.env.DEV_AGENT_NO_EDITOR = '1';
@@ -168,6 +169,57 @@ test('e2e tags: @claude overrides the orchestrator and the executor is kept when
     assert.ok(log.executor[1].prompt.includes('export const v2'), 'requested file is loaded');
     assert.ok(log.executor[1].prompt.includes('export const v1'), 'previously loaded files survive the recursion');
     assert.equal(log.orchestratorCalls, 1, 'the orchestrator is not called again on auto-loading');
+});
+
+test('e2e chat: commands of a reply without file changes are run, not dropped', async () => {
+    makeProject({ 'src/a.js': 'export const a = 1;\n' });
+    mockNetwork({
+        orchestrator: decision({ files: ['src/a.js'] }),
+        executor: () => ({ mode: 'chat', message: 'Проверяю синтаксис', commandsToRun: ['node --check src/a.js'] }),
+    });
+
+    await processAgentTask('check the module');
+
+    assert.ok(getSession().includes('[COMMAND EXECUTED]: node --check src/a.js'));
+});
+
+test('e2e patch: git add/commit in a reply that also edits files commit the previous step, before the new edits', async () => {
+    const dir = makeProject({ 'src/a.js': 'export const step = 1;\n' });
+    const git = (args) => execFileSync('git', args, { cwd: dir, encoding: 'utf-8' });
+    git(['init', '-q']);
+    git(['config', 'user.email', 't@example.com']); git(['config', 'user.name', 't']); git(['config', 'core.autocrlf', 'false']);
+    git(['add', '-A']); git(['commit', '-qm', 'base']);
+    fs.writeFileSync(path.join(dir, 'src/a.js'), 'export const step = 2;\n'); // previous step: verified, not committed yet
+    mockNetwork({
+        orchestrator: decision({ files: ['src/a.js'] }),
+        executor: () => ({
+            mode: 'patch', message: 'Коммичу шаг 2 и делаю шаг 3',
+            filesToUpdate: [{ path: 'src/a.js', edits: [{ search: 'step = 2', replace: 'step = 3' }] }],
+            commandsToRun: ['git add src/a.js', 'git commit -m "step 2"'],
+        }),
+    });
+
+    await processAgentTask('commit step 2 and do step 3');
+
+    assert.equal(git(['show', 'HEAD:src/a.js']), 'export const step = 2;\n', 'the commit holds step 2 only');
+    assert.equal(fs.readFileSync(path.join(dir, 'src/a.js'), 'utf-8'), 'export const step = 3;\n', 'step 3 is applied after it');
+});
+
+test('e2e patch: when the commit of the previous step is declined, the new edits are not written either', async () => {
+    const dir = makeProject({ 'src/a.js': 'export const step = 2;\n' }); // the confirm handler declines everything
+    mockNetwork({
+        orchestrator: decision({ files: ['src/a.js'] }),
+        executor: () => ({
+            mode: 'patch', message: 'Коммичу шаг 2 и делаю шаг 3',
+            filesToUpdate: [{ path: 'src/a.js', edits: [{ search: 'step = 2', replace: 'step = 3' }] }],
+            commandsToRun: ['git commit -m "step 2" -- src/a.js'],
+        }),
+    });
+
+    await processAgentTask('commit step 2 and do step 3');
+
+    assert.equal(fs.readFileSync(path.join(dir, 'src/a.js'), 'utf-8'), 'export const step = 2;\n');
+    assert.ok(getSession().includes('NONE of your file changes were written'));
 });
 
 test('e2e chat: automatic file loading is capped (no endless @-recursion)', async () => {
