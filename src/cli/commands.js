@@ -1,10 +1,10 @@
 import { config } from '../config.js';
-import { getSession, clearSession, initSession } from '../engine/session.js';
+import { getSession, clearSession, initSession, appendToSession } from '../engine/session.js';
 import { processAgentTask } from '../engine/task-runner.js';
 import { startSupervisedServer, stopDevServer } from '../engine/server-supervisor.js';
 import { generateDocumentation } from '../project/history.js';
 import { buildProjectMap } from '../project/project-map.js';
-import { abortSessionPatches, applyRedoPatches, clearSessionBackups } from '../project/rollback.js';
+import { abortSessionPatches, undoLastTask, applyRedoPatches, clearSessionBackups } from '../project/rollback.js';
 import { scanProjects, resolveProject, noAccessMessage } from '../project/projects.js';
 import { SELF_PROJECT, SELF_BRANCH, selfDiff } from '../project/self-workspace.js';
 import { runTests } from '../engine/tester.js';
@@ -116,6 +116,15 @@ const COMMANDS = {
         clearSession();
         initSession('Task aborted (waiting...)');
         console.log('🛑 Task aborted. AI memory erased. Files reverted.');
+    },
+
+    '/undo': async () => {
+        console.log('\n↩️ Отменяю последнюю задачу агента...');
+        const label = await undoLastTask();
+        if (label === null) return;
+        // The model must know its last change is gone, or it will build on code that no longer exists
+        appendToSession('user', `[SYSTEM] The developer undid the last agent task ("${label}"): all its file changes were reverted. The files are back to their state before that task.`);
+        console.log(`↩️ Задача отменена: «${label}». Файлы возвращены, память агента сохранена.`);
     },
 
     '/redo': async () => {

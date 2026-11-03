@@ -2,7 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import { getStatePaths } from './state-paths.js';
 import { resolveProjectFile, validateFileUpdate } from '@veroma/ai-core/safety';
-import { newBackupPath, readCreated, writeCreated, hasBackup } from './backups.js';
+import {
+    newBackupPath, encodeBackupName, readCreated, writeCreated, hasBackup,
+    readTasks, writeTasks, currentTaskEntry,
+} from './backups.js';
 import { openInEditor } from './editor.js';
 import { buildProjectMap } from './project-map.js';
 import { resolveFileContent } from './edits.js';
@@ -51,18 +54,29 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
 
     const applied = [];
     const created = readCreated(backupDir);
+    const tasks = readTasks(backupDir);
+    const task = currentTaskEntry(tasks); // the /undo step this write belongs to
+    const backup = (relativePath, absolutePath, note = '') => {
+        const backupPath = newBackupPath(backupDir, relativePath);
+        fs.copyFileSync(absolutePath, backupPath);
+        task.backups.push(path.basename(backupPath));
+        console.log(`💾 Backup saved${note}: .dev-agent/backups/${path.basename(backupPath)}`);
+    };
 
     // 1. Updates and creations
     for (const file of updates) {
         if (file.existed) {
-            const backupPath = newBackupPath(backupDir, file.relativePath);
-            fs.copyFileSync(file.absolutePath, backupPath);
-            console.log(`💾 Backup saved: .dev-agent/backups/${path.basename(backupPath)}`);
+            backup(file.relativePath, file.absolutePath);
         } else {
             fs.mkdirSync(path.dirname(file.absolutePath), { recursive: true });
             // A file deleted earlier in this session has a backup: it must be restored, not deleted, on /abort
             if (!created.includes(file.relativePath) && !hasBackup(backupDir, file.relativePath)) {
                 created.push(file.relativePath);
+            }
+            // Same rule within the task for /undo: absent before the task = delete on undo
+            const prefix = encodeBackupName(file.relativePath) + '_';
+            if (!task.created.includes(file.relativePath) && !task.backups.some(b => b.startsWith(prefix))) {
+                task.created.push(file.relativePath);
             }
         }
 
@@ -76,9 +90,7 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
     // 2. Deletions (always backed up first)
     for (const file of deletions) {
         if (fs.existsSync(file.absolutePath) && fs.statSync(file.absolutePath).isFile()) {
-            const backupPath = newBackupPath(backupDir, file.relativePath);
-            fs.copyFileSync(file.absolutePath, backupPath);
-            console.log(`💾 Backup saved (before delete): .dev-agent/backups/${path.basename(backupPath)}`);
+            backup(file.relativePath, file.absolutePath, ' (before delete)');
             fs.unlinkSync(file.absolutePath);
             console.log(`🗑️ File deleted: ${file.relativePath}`);
             applied.push(file.relativePath);
@@ -86,6 +98,7 @@ export async function applyPatches(targetProject, filesToUpdate = [], filesToDel
             console.log(`⚠️ Skip deletion: File not found ${file.relativePath}`);
         }
     }
+    writeTasks(backupDir, tasks);
 
     // 3. Refresh the project map
     if (updates.length > 0 || deletions.length > 0) {

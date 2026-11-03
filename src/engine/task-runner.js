@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { getStatePaths } from '../project/state-paths.js';
 import { readFilesContent } from '../project/file-manager.js';
+import { beginTask } from '../project/backups.js';
 import { resetUsage, getUsage, formatUsage } from '../llm/usage.js';
 import { appendToSession, getSession, compressSessionIfNeeded } from './session.js';
 import { selectContext, extractMentions, resolveMention } from './context-builder.js';
@@ -131,7 +132,10 @@ function escalate(state) {
  * @param {{tier?: string, tierForced?: boolean, forceFullAudit?: boolean}} [options]
  */
 export async function processAgentTask(text, depth = 0, inheritedFiles = [], options = {}) {
-    if (depth === 0) resetUsage();
+    if (depth === 0) {
+        resetUsage();
+        beginTask(text); // auto-loading continuations (depth > 0) stay in the same /undo step
+    }
     console.log('🤖 [AGENT] Gathering context...');
     appendToSession('user', text);
 

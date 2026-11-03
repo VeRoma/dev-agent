@@ -8,7 +8,8 @@ process.env.DEV_AGENT_NO_EDITOR = '1'; // do not open VS Code from tests
 
 const { applyPatches } = await import('../src/project/patcher.js');
 const { applyEdits } = await import('../src/project/edits.js');
-const { abortSessionPatches, applyRedoPatches } = await import('../src/project/rollback.js');
+const { abortSessionPatches, applyRedoPatches, undoLastTask } = await import('../src/project/rollback.js');
+const { beginTask } = await import('../src/project/backups.js');
 const { readFilesContent } = await import('../src/project/file-manager.js');
 const { getStatePaths } = await import('../src/project/state-paths.js');
 
@@ -60,7 +61,7 @@ test('patcher: search/replace edits patch a big file without resending it; a bad
     const ok = await applyPatches(dir, [{ path: 'src/big.js', edits: [{ search: 'export const v150 = 150;', replace: 'export const v150 = -150;' }] }]);
     assert.deepEqual(ok.applied, ['src/big.js']);
     assert.equal(read(dir, 'src/big.js'), big.replace('v150 = 150;', 'v150 = -150;'));
-    const backups = fs.readdirSync(getStatePaths(dir).backupDir).filter(f => f !== 'created.json');
+    const backups = fs.readdirSync(getStatePaths(dir).backupDir).filter(f => f.endsWith('.bak'));
     assert.equal(backups.length, 1, 'edited file is backed up like a full rewrite');
 
     // One failing edit in one file: nothing is written in any file
@@ -128,6 +129,54 @@ test('rollback: a file deleted and re-created in one session is restored, not de
     await applyPatches(dir, [], [{ path: 'src/a.js' }]);
     await applyPatches(dir, [{ path: 'src/a.js', content: 'export const a = 9;\n' }]);
     await abortSessionPatches(dir);
+    assert.equal(read(dir, 'src/a.js'), 'export const a = 1;\n');
+});
+
+test('undo: reverts only the last task (all its attempts), one task at a time; redo and abort still work', async () => {
+    const dir = makeProject();
+    const exists = (rel) => fs.existsSync(path.join(dir, rel));
+
+    beginTask('task 1');
+    await applyPatches(dir, [{ path: 'src/a.js', content: 'export const a = 2;\n' }, { path: 'src/new.js', content: 'export const n = 1;\n' }]);
+    beginTask('task 2');
+    await applyPatches(dir, [{ path: 'src/a.js', content: 'export const a = 3;\n' }, { path: 'src/two.js', content: 'export const w = 1;\n' }]);
+    await applyPatches(dir, [{ path: 'src/a.js', content: 'export const a = 4;\n' }], [{ path: 'src/__tests__/t.js' }]); // a fixing attempt
+    beginTask('a chat-only task');                                                    // wrote nothing: not an undo step
+
+    assert.equal(await undoLastTask(dir), 'task 2');
+    assert.equal(read(dir, 'src/a.js'), 'export const a = 2;\n', 'back to the state after task 1, not before it');
+    assert.ok(!exists('src/two.js'), 'file created by task 2 is removed');
+    assert.equal(read(dir, 'src/__tests__/t.js'), 'export const t = 1;\n', 'file deleted by task 2 is back');
+    assert.equal(read(dir, 'src/new.js'), 'export const n = 1;\n', 'task 1 is untouched');
+
+    assert.equal(await applyRedoPatches(dir), true);
+    assert.equal(read(dir, 'src/a.js'), 'export const a = 4;\n');
+    assert.ok(exists('src/two.js') && !exists('src/__tests__/t.js'));
+
+    assert.equal(await undoLastTask(dir), 'task 2', 'after /redo the task can be undone again');
+    assert.equal(await undoLastTask(dir), 'task 1');
+    assert.equal(read(dir, 'src/a.js'), 'export const a = 1;\n');
+    assert.ok(!exists('src/new.js'));
+    assert.equal(await undoLastTask(dir), null);
+
+    // /abort after undos: nothing left to revert in this session, files stay original
+    beginTask('task 3');
+    await applyPatches(dir, [{ path: 'src/a.js', content: 'export const a = 5;\n' }]);
+    await abortSessionPatches(dir);
+    assert.equal(read(dir, 'src/a.js'), 'export const a = 1;\n');
+    assert.equal(await undoLastTask(dir), null, '/abort clears the task journal');
+});
+
+test('undo: a file deleted by one task and re-created by the next is deleted, then restored, step by step', async () => {
+    const dir = makeProject();
+    beginTask('delete');
+    await applyPatches(dir, [], [{ path: 'src/a.js' }]);
+    beginTask('re-create');
+    await applyPatches(dir, [{ path: 'src/a.js', content: 'export const a = 9;\n' }]);
+
+    await undoLastTask(dir);
+    assert.ok(!fs.existsSync(path.join(dir, 'src/a.js')), 'before "re-create" the file did not exist');
+    await undoLastTask(dir);
     assert.equal(read(dir, 'src/a.js'), 'export const a = 1;\n');
 });
 
