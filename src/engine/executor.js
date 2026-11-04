@@ -15,6 +15,8 @@ export async function askForJson(prompt, tier = 'fast', label = tier) {
     try {
         return await askJson(prompt, tier, label);
     } catch (firstError) {
+        // No model can answer (no credits, output limit): a retry would only repeat the same failure
+        if (firstError.code === 'NO_MODELS_AVAILABLE') throw firstError;
         console.log(`⚠️ Модель вернула невалидный JSON (${firstError.message}). Повторный запрос...`);
         const retryPrompt = `${prompt}\n\nYour previous reply was NOT valid JSON (${firstError.message}). Reply again with ONLY one valid raw JSON object: no markdown, no commentary, all strings properly escaped, and make sure the reply is not truncated.`;
         return askJson(retryPrompt, tier, `${label} json-retry`);

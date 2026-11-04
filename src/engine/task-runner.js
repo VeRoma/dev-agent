@@ -174,7 +174,8 @@ export async function processAgentTask(text, depth = 0, inheritedFiles = [], opt
                 parsed = await askAgent(prompt, state.tier, attempt > 0 ? `${state.tier} fix` : state.tier);
             } catch (error) {
                 // No valid JSON even after the retry and all fallbacks: count as a failure, maybe escalate
-                if (attempt >= MAX_HEALING_ATTEMPTS) throw error;
+                // No model can answer at all (no credits, output limit): more attempts would only repeat it
+                if (attempt >= MAX_HEALING_ATTEMPTS || error.code === 'NO_MODELS_AVAILABLE') throw error;
                 console.log(`⚠️ [WARN] Исполнитель не дал корректный ответ: ${error.message}`);
                 escalate(state);
                 continue;

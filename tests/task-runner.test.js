@@ -51,7 +51,7 @@ function makeProject(files, llm = {}) {
 function mockNetwork({ orchestrator, executor }) {
     const log = { executor: [], orchestratorCalls: 0 };
     const ok = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
-    const fail = (error) => ({ ok: false, status: 500, text: async () => error.message });
+    const fail = (error) => ({ ok: false, status: error.status ?? 500, text: async () => error.message });
 
     globalThis.fetch = async (url, opts) => {
         url = String(url);
@@ -271,6 +271,25 @@ test('e2e outages: orchestrator down -> default tier; DeepSeek down -> escalatio
     assert.ok(!providers(log).includes('ollama'));
     assert.equal(providers(log).at(-1), 'gemini', 'after repeated DeepSeek failures the task moves up a tier');
     assert.ok(getSession().includes('Ответ облачной модели'));
+});
+
+test('e2e outages: a provider without credits stops the task after one request, no retries or healing rounds', async () => {
+    makeProject({ 'a.js': 'export const a = 1;\n' }, { noCreditsCooldownMs: 50 });
+    const noCredits = Object.assign(new Error('{"error":{"message":"Your credit balance is too low"}}'), { status: 400 });
+    const log = mockNetwork({ orchestrator: decision(), executor: () => noCredits });
+
+    const printed = [];
+    const realLog = console.log;
+    console.log = (...args) => printed.push(args.join(' '));
+    try {
+        await processAgentTask('@claude explain @a.js');
+    } finally {
+        console.log = realLog;
+    }
+
+    assert.deepEqual(providers(log), ['claude'], 'neither the JSON retry nor the healing attempts ask again');
+    assert.ok(!printed.some(line => /Повторный запрос|fixing errors/.test(line)), 'the agent stops instead of looping over attempts');
+    await new Promise(resolve => setTimeout(resolve, 60)); // let the cooldown end for the next tests
 });
 
 test('e2e /audit: a full audit is never given to the fast tier', async () => {
