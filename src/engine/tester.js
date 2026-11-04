@@ -66,13 +66,18 @@ function mavenSummary(output) {
     return (lines.length > 0 ? lines.join('\n') : output).slice(-OUTPUT_TAIL);
 }
 
-/** Assertion messages live in target/surefire-reports/*.txt; the console only names the failing line. */
-function surefireFailures(moduleDir) {
+/**
+ * Assertion messages live in target/surefire-reports/*.txt; the console only names the failing line.
+ * Only reports written by this run count: older ones (other test classes, manual runs) would mislead the model.
+ */
+export function surefireFailures(moduleDir, sinceMs = 0) {
     const dir = path.join(moduleDir, 'target', 'surefire-reports');
     let text = '';
     try {
         for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.txt'))) {
-            const report = fs.readFileSync(path.join(dir, file), 'utf-8');
+            const reportPath = path.join(dir, file);
+            if (fs.statSync(reportPath).mtimeMs < sinceMs) continue;
+            const report = fs.readFileSync(reportPath, 'utf-8');
             if (!/<<< (FAILURE|ERROR)!/.test(report)) continue;
             // Stack frames of the test framework add nothing: keep messages and the project's own frames
             const lines = report.split(/\r?\n/).filter(l => !/^\s+at (org\.junit|org\.mockito|java\.|jdk\.|org\.apache\.maven|sun\.)/.test(l));
@@ -106,12 +111,13 @@ export async function runTests(targetProject, updatedFiles = []) {
             const command = mavenCommand(cwd);
             const label = `${moduleRelative || '.'}: ${command.includes('mvnw') ? 'mvnw' : 'mvn'} -B test`;
             console.log(`🧪 ${label} (без секретов агента в окружении)`);
+            const startedAt = Date.now();
             const { error, output } = await run(command, cwd, MAVEN_TIMEOUT_MS);
             if (error) {
                 if (!mavenStarted(output)) {
                     return { ok: true, output, warnings: [`Maven не запустился (${label}) — тесты пропущены`] };
                 }
-                return { ok: false, output: `${label}\n${mavenSummary(output)}${surefireFailures(cwd)}`.slice(-OUTPUT_TAIL * 2) };
+                return { ok: false, output: `${label}\n${mavenSummary(output)}${surefireFailures(cwd, startedAt)}`.slice(-OUTPUT_TAIL * 2) };
             }
         }
         return { ok: true, output: '' };

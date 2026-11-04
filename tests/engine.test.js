@@ -8,7 +8,7 @@ import { fallbackChain, pickProvider, isLocalModel } from '../src/llm/index.js';
 import { normalizeCommand, runCommands, isTestCommand } from '../src/engine/command-runner.js';
 import { setConfirmHandler } from '../src/engine/io.js';
 import { runLinter } from '../src/engine/linter.js';
-import { runTests, findMavenModules } from '../src/engine/tester.js';
+import { runTests, findMavenModules, surefireFailures } from '../src/engine/tester.js';
 
 // Commands log to the session of the selected project: a temp one, never a real project
 setTargetProject(fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-engine-')));
@@ -131,6 +131,26 @@ test('tester: Maven tests run through the wrapper, failures are reported, the ag
         assert.equal((await runTests(root, ['backend/src/A.java'])).ok, true);
     } finally {
         if (saved === undefined) delete process.env.TELEGRAM_BOT_TOKEN; else process.env.TELEGRAM_BOT_TOKEN = saved;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('tester: only surefire reports written by this run reach the model', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-agent-surefire-'));
+    try {
+        const dir = path.join(root, 'target/surefire-reports');
+        fs.mkdirSync(dir, { recursive: true });
+        const stale = path.join(dir, 'StaleTest.txt');
+        fs.writeFileSync(stale, 'Tests run: 1, Failures: 1 <<< FAILURE!\nstale assertion');
+        const old = new Date(Date.now() - 10 * 60 * 1000);
+        fs.utimesSync(stale, old, old);
+        const startedAt = Date.now() - 1000;
+        fs.writeFileSync(path.join(dir, 'FreshTest.txt'), 'Tests run: 1, Failures: 1 <<< FAILURE!\nfresh assertion');
+
+        const text = surefireFailures(root, startedAt);
+        assert.match(text, /fresh assertion/);
+        assert.ok(!text.includes('stale assertion'), 'a report from an earlier run must be ignored');
+    } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
